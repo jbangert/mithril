@@ -1,0 +1,12 @@
+GEM
+  remote: http://rubygems.org/
+  specs:
+    bindata (1.4.5)
+    renum (1.4.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  bindata
+  renum (= 1.4.0)
