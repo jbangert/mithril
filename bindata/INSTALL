@@ -1,0 +1,11 @@
+This package is designed to be installed with rubygems.  If you don't
+have rubygems installed on your system, the older setup.rb is
+included as a convenience.
+
+  ($ su)
+  # ruby setup.rb
+
+This simple step installs bindata under the default location for Ruby
+libraries.  You can also customize the installation by supplying some
+options to setup.rb.
+Try "ruby setup.rb --help".

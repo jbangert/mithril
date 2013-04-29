@@ -1,3 +1,8 @@
 source 'http://rubygems.org'
-gem 'bindata'
+gem 'bindata', :path => "../bindata/"
 gem 'renum'  , '1.4.0'
+gem 'andand'
+gem 'segment_tree'
+gem 'pry'
+gem 'pry-debugger'
+gem 'pry-stack_explorer'
