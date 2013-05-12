@@ -23,7 +23,10 @@ def expect_value(desc,is,should)
   raise RuntimeError.new "Invalid #{desc}, expected #{should} instead of #{is}" if is != should
 end
 
-module Elf
+module Elf 
+  DT = ElfFlags::DynamicType
+  SHT = ElfFlags::SectionType
+  ET = ElfFlags::Type
   class StringTable
     def initialize(data)
       expect_value "First byte of string table", data.bytes.first, 0
@@ -45,7 +48,7 @@ module Elf
     attr_accessor :bind_now, :symbolic, :needed, :init, :fini, :pltgot, :debug_val, :extra_dynamic
   end
   class ProgBits
-    attr_accessor :data,:name, :addr, :flags, :align
+    attr_accessor :data,:name, :addr, :flags, :align, :entsize
     def initialize(name,shdr,data)
       @data = StringIO.new(data)
       @name = name
@@ -57,6 +60,9 @@ module Elf
       @entsize = shdr.entsize # Expect 0 for now?
       #      expect_value "PROGBITS entsize", @entsize,0
       expect_value "Progbits must be full present", @data.size, shdr.siz
+    end
+    def sect_type
+      SHT::SHT_PROGBITS
     end
     def size
       @data.size
@@ -74,6 +80,15 @@ module Elf
       @entsize = shdr.entsize # Expect 0 for now?
       @size = shdr.siz
       #      expect_value "PROGBITS entsize", @entsize,0
+    end
+    def data
+      StringIO.new("")
+    end
+    def sect_type
+      SHT::SHT_NOBITS
+    end
+    def entsize
+      1
     end
     def size
       @size
@@ -96,7 +111,7 @@ module Elf
   class ElfFile
     attr_accessor :filetype, :machine, :entry, :flags, :version
     attr_accessor :progbits, :nobits, :dynamic, :symbols, :relocations
-    attr_accessor :notes
+    attr_accessor :notes, :bits, :endian
   end
   class Parser
     attr_reader :file
@@ -108,21 +123,21 @@ module Elf
       raise RuntimeError.new "Invalid ELF version #{ident.id_version}" if ident.id_version != ElfFlags::Version::EV_CURRENT
       case ident.id_class
       when ElfFlags::IdentClass::ELFCLASS64
-        bits = 64
+        @file.bits = 64
       when ElfFlags::IdentClass::ELFCLASS32
-        bits = 32
+        @file.bits = 32
       else
         RuntimeError.new "Invalid ELF class #{ident.id_class}"
       end
       case ident.id_data
       when ElfFlags::IdentData::ELFDATA2LSB
-        endian = :little
+        @file.endian = :little
       when ElfFlags::IdentData::ELFDATA2MSB
-        endian = :big
+        @file.endian = :big
       else
         RuntimeError.new  "Invalid ELF endianness #{ident.id_data}"
       end
-      @factory = ElfStructFactory.instance(endian,bits)
+      @factory = ElfStructFactory.instance(@file.endian,@file.bits)
       parse_with_factory()
     end
     def self.from_file(filename)
@@ -166,11 +181,9 @@ module Elf
     def parse_progbits(shdr)
       @data.seek shdr.off
       @unparsed_sections.delete shdr.index
+      expect_value "PROGBITS link",shdr.link,0
       ProgBits.new(@shstrtab[shdr.name], shdr,  @data.read(shdr.siz))
     end
-    DT = ElfFlags::DynamicType
-    SHT = ElfFlags::SectionType
-    ET = ElfFlags::Type
     DYNAMIC_FLAGS =            {
       DT::DT_TEXTREL=>:@textrel,
       DT::DT_BIND_NOW => :@bind_now,
@@ -378,6 +391,7 @@ module Elf
       @unparsed_sections.delete @data
       @factory.note.read(@data).tap {|n|
         expect_value "Note size",n.num_bytes, note.siz
+        n.section_name = @shstrtab[note.name] rescue nil
       }
     end
     PT = ElfFlags::PhdrType
@@ -438,6 +452,7 @@ module Elf
       @file.machine = @hdr.machine
       @file.version = @hdr.version # Shouldn't this always be the current one
       @file.flags = @hdr.flags
+      @file.entry = @hdr.entry
       expect_value "ELF version",@file.version, ElfFlags::Version::EV_CURRENT
       #pp hdr.snapshot
 
@@ -514,12 +529,163 @@ module Elf
     end
   end
 
-
-  class Writer
-    def self.to_file(io,elf)
+module Writer
+  class StringTable #Replace with compacting string table
+    attr_reader :buf
+    def initialize 
+      @buf = StringIO.new("\0")
+      @strings = {} #TODO: Do substring matching, compress the string
+      #table.
+      # Actually, make all string tables except dynstr one, might save
+      # a bit 
     end
+    def add_string(string) 
+      unless @strings.include? string
+        @strings[string] =  @buf.tell.tap {|x| 
+          BinData::Stringz::new(string).write(@buf)
+        }
+      end
+      @strings[string]
+    end      
+  end
+  #TODO: Needs a unique class for 'allocatable' sections. 
+  #Then just sort, and write them out
+  class Writer #TODO: Completely refactor this
+      PAGESIZE = 2^16  #KLUDGE: largest pagesize , align everything to
+    #pagesizes 
+    def initialize(file,factory)
+      @factory = factory
+      @file = file
+      @shstrtab = StringTable.new()
+      @shdrs= BinData::Array::new(type: @factory.shdr,initial_length: 0)
+      @phdrs= BinData::Array::new(type: @factory.phdr,initial_length: 0)
+      @buf = StringIO.new()
+      write_to_buf
+    end
+    def self.to_file(filename,elf)
+      factory = ElfStructFactory.instance(elf.endian,elf.bits) 
+      writer = Writer.new(elf,factory)
+      IO.write filename,writer.buf.string
+    end
+    attr_reader :buf
+    private
+    def add_section(name,type,flags,vaddr,off,siz,link,info,align,entsize)
+      x=  @factory.shdr.new
+      x.name   = @shstrtab.add_string(name)
+      x.type   = type
+      x.flags  = flags
+      x.vaddr  = vaddr
+      x.off    = off
+      x.siz    = siz
+      x.link   = link
+      x.info   = info
+      x.addralign  = align
+      x.entsize= entsize
+      @shdrs<< x 
+      @shdrs.size - 1
+    end
+    def align(bytes)
+      @buf.seek bytes - (@buf.tell % bytes), IO::SEEK_CUR
+    end
+    def write_progbits
+      
+      write_out=(@file.progbits + @file.nobits).sort_by{|x| x.addr}
+      write_out.each do |sect| 
+        align sect.align
+        off = @buf.tell
+        @buf.write sect.data.string
+        add_section sect.name, sect.sect_type, sect.flags, sect.addr, off, @buf.size,0,0,sect.align, sect.entsize
+      end
+    end
+    def write_note
+      align 4
+      @file.notes do |note|
+        note.write(@buf) # Luckily, notes are stored as is.
+        note_name = note.section_name || ".note.unk#{note.hash}" 
+        # TODO:        # MD5 of contents?
+        add_section note_name, SHT::NOTE, note_flags, 0, off, note.num_bytes,0,0,note_align, sect.entsize
+      end
+      #TODO:Add PHDR
+      #      @file.note.each do |
+    end
+    
+    def write_dynsym
+    end # Produce a hash and a GNU_HASH as well
+    def write_dynamic
+    end # Write note, etc for the above
+    def write_phdr(filehdr)
+      #Assemble phdrs
+    end 
+    def write_reladyn()
+    end
+    def write_shstrtab() # Last section written
+     
+      name = ".shstrtab"
+      @shstrtab.add_string name
+      idx = add_section name, SHT::SHT_STRTAB, 0, 0, @buf.tell, @shstrtab.buf.size,0,0,0,0
+
+      @buf.write  @shstrtab.buf.string
+      idx
+    end
+    def write_shdr(filehdr)
+      #      @buf.align 8 # See if this has a performance advantage/
+      #      makes less tools crash 
+      filehdr.shstrndx = write_shstrtab
+      filehdr.shoff = @buf.tell
+      filehdr.shentsize = @shdrs[0].num_bytes
+      filehdr.shnum = @shdrs.size
+      @shdrs.write buf
+    end
+
+    def write_headers
+      hdr = @factory.hdr.new
+      case @file.endian
+        when :big
+        hdr.ident.id_data =  ElfFlags::IdentData::ELFDATA2MSB 
+        when :little
+        hdr.ident.id_data =  ElfFlags::IdentData::ELFDATA2LSB 
+        else 
+        raise ArgumentError.new "Invalid endianness"
+      end
+      case @file.bits 
+      when 64 
+        hdr.ident.id_class = ElfFlags::IdentClass::ELFCLASS64
+      when 32
+        hdr.ident.id_class = ElfFlags::IdentClass::ELFCLASS32
+      else
+        raise ArgumentError.new "Invalid class"
+      end
+      hdr.ident.id_version = ElfFlags::Version::EV_CURRENT
+      
+      hdr.type = @file.filetype
+      hdr.machine = @file.machine
+      hdr.version = @file.version
+      hdr.entry = @file.entry
+      hdr.flags = @file.flags
+      
+      write_phdr(hdr)
+      write_shdr(hdr)
+      @buf.seek 0 
+      hdr.write @buf
+    end
+#TODO: Fix things like INTERP
+      
+
+    def write_to_buf #Make this memoized
+      @buf.seek @factory.hdr.new.num_bytes #Leave space for header.
+      #this is pretty bad
+      write_progbits 
+      write_note
+      write_dynsym
+      write_reladyn
+      write_dynamic
+      write_headers
+    end
+
+  end
+end
 end
 
-parse = Elf::Parser.from_file "/bin/ls"
-pp parse.instance_variables
+$parse = Elf::Parser.from_file "/bin/ls"
+#pp parse # .instance_variables
 ##TODO: Do enums as custom records.

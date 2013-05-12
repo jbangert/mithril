@@ -4,7 +4,7 @@ require_relative 'elf_enums'
 module ElfStructs
   class ElfIdentification   < BinData::Record
     endian :little
-    string :id_magic,  :length=>4  #  :value => "\x7FELF"
+    string :id_magic,  :length=>4 ,   :initial_value => "\x7FELF" #TODO: validate?
     uint8  :id_class
     uint8  :id_data
     uint8  :id_version
@@ -42,6 +42,7 @@ module ElfStructs
     uint32	:type		# Type of this note.
     string      :name, :read_length => lambda{ (namesz.to_i  * 4 + 3)/4 } # Round up
     string      :desc, :read_length => lambda{ (descsz.to_i  * 4 + 3)/4 }
+    attr_accessor :section_name
   end
 
   def shdr
