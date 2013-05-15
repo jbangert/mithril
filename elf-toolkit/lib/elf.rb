@@ -29,6 +29,9 @@ module Elf
   SHT = ElfFlags::SectionType
   SHF = ElfFlags::SectionFlags
   ET = ElfFlags::Type
+  NOTE_ALIGN = 4
+  NOTE_FLAGS = SHF::SHF_ALLOC
+  NOTE_ENTSIZE =0
   class StringTable
     def initialize(data)
       expect_value "First byte of string table", data.bytes.first, 0
@@ -391,9 +394,12 @@ module Elf
     def parse_note(note)
       note_name = @shstrtab[note.name] || ".note.unk.#{note.off}"
       @data.seek note.off
+      expect_value "Note alignment", note.addralign, NOTE_ALIGN
+      expect_value "Note flags", note.flags, NOTE_FLAGS
+      expect_value "Note entsize", note.entsize, NOTE_ENTSIZE
       @unparsed_sections.delete @data
       [note_name, @factory.note.read(@data).tap {|n|
-        expect_value "Note size",n.num_bytes, note.siz
+         expect_value "Note size",n.num_bytes, note.siz 
       } ]
     end
     PT = ElfFlags::PhdrType
@@ -637,19 +643,18 @@ module Writer
     private
   def allocate_sections(chunk)
     return unless chunk.first.flags & SHF::SHF_ALLOC != 0
-    align = chunk.max_by{ |x| x.align} #Should technically be the
+    align = chunk.max_by{ |x| x.align}.align #Should technically be the
     #lcm
 
     #TODO: check that they are powers of two
-    size = chunk.reduce(0) {|i,x| i+roundup(x.size,align)}
-    addr = roundup(@layout_by_flags[chunk.first.flags].last.andand.end,align)
-    if(addr.nil? or !range_available(@layout,addr,addr+size))
-      addr = roundup(@layout.last.end,align)
-      expect_value "Address space has room", range_available(@layout,addr,addr+size),true
+    size = chunk.reduce(0) {|i,x| i+roundup(x.siz,align)}
+    addr = @layout_by_flags[chunk.first.flags].last.andand { |x| roundup(x[1].end,align)}
+    if(addr.nil? or !range_available?(@layout,addr,addr+size))
+      addr = roundup(@layout.last[1].end,align)
+      expect_value "Address space has room", range_available?(@layout,addr,addr+size),true
     end
     chunk.each  do |section|
-      section.addr = roundup(addr + section.siz,align)
-      #TODO: inject offset too?
+      section.vaddr = roundup(addr + section.siz,align)
     end
   end
   def roundup(number, align)
@@ -699,8 +704,8 @@ end
       end
     end
     def note
-      @file.notes do |name,note|
-        addr = @layout << OutputSection.new(name, SHT::NOTE, note_flags, nil, note.num_bytes,0,0,note_align, sect.entsize)
+      @file.notes.each do |name,note|
+        addr = @layout << OutputSection.new(name, SHT::SHT_NOTE, NOTE_FLAGS, nil, note.num_bytes,0,0,NOTE_ALIGN, NOTE_ENTSIZE,note.to_binary_s)
       end
 #TODO: add phdr
     end
