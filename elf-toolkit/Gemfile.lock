@@ -29,6 +29,7 @@ GEM
     pry-stack_explorer (0.4.9)
       binding_of_caller (>= 0.7)
       pry (~> 0.9.11)
+    rbtree-pure (0.1.1)
     renum (1.4.0)
     segment_tree (0.1.0)
     slop (3.4.4)
@@ -42,5 +43,6 @@ DEPENDENCIES
   pry
   pry-debugger
   pry-stack_explorer
+  rbtree-pure
   renum (= 1.4.0)
   segment_tree

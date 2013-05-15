@@ -6,6 +6,7 @@ require_relative 'elf_structs'
 require 'pp'
 require 'set'
 require 'segment_tree'
+require 'rbtree'
 def enum(name, type, enum_class )         # To be done
   klass = Class.new BinData::Primitive  do
     type value
@@ -26,6 +27,7 @@ end
 module Elf 
   DT = ElfFlags::DynamicType
   SHT = ElfFlags::SectionType
+  SHF = ElfFlags::SectionFlags
   ET = ElfFlags::Type
   class StringTable
     def initialize(data)
@@ -387,12 +389,12 @@ module Elf
       retval
     end
     def parse_note(note)
+      note_name = @shstrtab[note.name] || ".note.unk.#{note.off}"
       @data.seek note.off
       @unparsed_sections.delete @data
-      @factory.note.read(@data).tap {|n|
+      [note_name, @factory.note.read(@data).tap {|n|
         expect_value "Note size",n.num_bytes, note.siz
-        n.section_name = @shstrtab[note.name] rescue nil
-      }
+      } ]
     end
     PT = ElfFlags::PhdrType
     def parse_phdrs()
@@ -471,7 +473,10 @@ module Elf
 
       @shdrs.to_enum.with_index.each do |elem, i|
         elem.index = i
-        @unparsed_sections.add i
+        @unparsed_sections.add i 
+        unless elem.flags & SHF::SHF_ALLOC
+          expect_value "Unallocated section address", elem.vaddr, 0
+        end
       end
 
 
@@ -520,7 +525,7 @@ module Elf
 
       #TODO: gnu extensions, in particular gnu_hash
 
-      @file.notes = (@sect_types[SHT::SHT_NOTE] || []).map{|note| parse_note note}
+      @file.notes = Hash[(@sect_types[SHT::SHT_NOTE] || []).map{|note| parse_note note}]
       #TODO: expect non-nil dynamic for some types
       @file.relocations = @relocation_sections.values.flatten
       #TODO: Validate flags
@@ -548,6 +553,124 @@ module Writer
       @strings[string]
     end      
   end
+  class OutputSection 
+
+    attr_accessor :name, :type,:flags,:vaddr,:siz,:link,:info, :align, :entsize, :data, :shdr, :off
+    # TODO: Use params array
+    def initialize(name,type,flags,vaddr,siz,link,info,align,entsize,data) #link and info are strings, offset is done by output stage
+      @name,@type,@flags, @vaddr, @siz, @link, @info, @align, @entsize, @data= name,type,flags,vaddr,siz,link,info,align,entsize, data
+      @off = nil
+    end
+    def end
+      @vaddr + @siz
+    end
+    
+  end
+  class Layout
+    def initialize(factory)
+      @layout_by_flags = {}
+      @layout = RBTree.new()
+      @shstrtab = StringTable.new()
+      @factory = factory
+    end
+    def <<(*sections)       #Ordering as follows: Fixed
+      #(non-nil vaddrs) go where they have to go
+      # Flexible sections are added to lowest hole after section of
+      # the same type
+      return if sections.empty?
+      flags = sections.first.flags
+      @layout_by_flags[flags] ||= RBTree.new()
+      if sections.length > 1 || sections.first.vaddr.nil?
+        sections.each { |i| 
+          expect_value "All adjacent sections have the same flags", i.flags,flags
+          expect_value "All sections must float", i.vaddr, nil
+        }
+        allocate_sections(sections)
+      end
+      
+      sections.each {|i| 
+        expect_value "Sections shouldn't overlap",  range_available?(@layout,i.vaddr,i.end), true
+        @layout[i.vaddr] = i 
+        @layout_by_flags[i.flags][i.vaddr] = i
+      }
+    end 
+    def shstrtab(buf) # Last section written, TODO: Move to layout
+      name = ".shstrtab"
+      idx = @shstrtab.add_string name
+      x=@factory.shdr.new
+      x.name= idx 
+      x.type = SHT::SHT_STRTAB
+      x.off = buf.tell
+      x.siz = @shstrtab.buf.size
+      buf.write @shstrtab.buf.string
+      x
+    end
+
+    def write_sections(buf,filehdr)
+      sections = @layout.to_a.sort_by(&:first).map(&:last)
+      shdrs = BinData::Array.new(:type=>@factory.shdr).push *sections.map{ |s|
+        off = roundup(buf.tell,s.align)
+        s.off = off
+        buf.seek off
+        buf.write(s.data)
+        x=  @factory.shdr.new
+        x.name   = @shstrtab.add_string(s.name)
+        x.type   = s.type
+        x.flags  = s.flags
+        x.vaddr  = s.vaddr
+        x.off    = s.off
+        x.siz    = s.siz
+        x.link   = s.link
+        x.info   = s.info
+        x.addralign  = s.align
+        x.entsize= s.entsize
+        x
+      }
+      shdrs << shstrtab(buf)
+      filehdr.shstrndx = shdrs.size - 1
+      filehdr.shoff = buf.tell 
+      filehdr.shentsize = shdrs[0].num_bytes
+      filehdr.shnum = shdrs.size
+    
+      shdrs.write buf      
+    end
+    private
+  def allocate_sections(chunk)
+    return unless chunk.first.flags & SHF::SHF_ALLOC != 0
+    align = chunk.max_by{ |x| x.align} #Should technically be the
+    #lcm
+
+    #TODO: check that they are powers of two
+    size = chunk.reduce(0) {|i,x| i+roundup(x.size,align)}
+    addr = roundup(@layout_by_flags[chunk.first.flags].last.andand.end,align)
+    if(addr.nil? or !range_available(@layout,addr,addr+size))
+      addr = roundup(@layout.last.end,align)
+      expect_value "Address space has room", range_available(@layout,addr,addr+size),true
+    end
+    chunk.each  do |section|
+      section.addr = roundup(addr + section.siz,align)
+      #TODO: inject offset too?
+    end
+  end
+  def roundup(number, align)
+    return number if align == 0
+    case number % align
+    when 0
+      number
+    else
+      number + align - (number % align)
+    end
+  end
+  def range_available?(tree,from,to)
+    if tree.empty?
+      true
+    else
+      ( (tree.upper_bound(from).andand.last.andand.end || -1) <= from ) &&
+        ( (tree.lower_bound(to).andand.last.andand.vaddr || +1.0/0.0) > to)
+    end
+  end
+end
+ 
   #TODO: Needs a unique class for 'allocatable' sections. 
   #Then just sort, and write them out
   class Writer #TODO: Completely refactor this
@@ -556,7 +679,7 @@ module Writer
     def initialize(file,factory)
       @factory = factory
       @file = file
-      @shstrtab = StringTable.new()
+      @layout = Layout.new(@factory)
       @shdrs= BinData::Array::new(type: @factory.shdr,initial_length: 0)
       @phdrs= BinData::Array::new(type: @factory.phdr,initial_length: 0)
       @buf = StringIO.new()
@@ -569,74 +692,28 @@ module Writer
     end
     attr_reader :buf
     private
-    def add_section(name,type,flags,vaddr,off,siz,link,info,align,entsize)
-      x=  @factory.shdr.new
-      x.name   = @shstrtab.add_string(name)
-      x.type   = type
-      x.flags  = flags
-      x.vaddr  = vaddr
-      x.off    = off
-      x.siz    = siz
-      x.link   = link
-      x.info   = info
-      x.addralign  = align
-      x.entsize= entsize
-      @shdrs<< x 
-      @shdrs.size - 1
-    end
-    def align(bytes)
-      @buf.seek bytes - (@buf.tell % bytes), IO::SEEK_CUR
-    end
-    def write_progbits
-      
-      write_out=(@file.progbits + @file.nobits).sort_by{|x| x.addr}
-      write_out.each do |sect| 
-        align sect.align
-        off = @buf.tell
-        @buf.write sect.data.string
-        add_section sect.name, sect.sect_type, sect.flags, sect.addr, off, @buf.size,0,0,sect.align, sect.entsize
+
+    def progbits
+      (@file.progbits + @file.nobits).each do |sect| 
+        @layout << OutputSection.new(sect.name,sect.sect_type, sect.flags, sect.addr, sect.size,0,0,sect.align, sect.entsize, sect.data.string)
       end
     end
-    def write_note
-      align 4
-      @file.notes do |note|
-        note.write(@buf) # Luckily, notes are stored as is.
-        note_name = note.section_name || ".note.unk#{note.hash}" 
-        # TODO:        # MD5 of contents?
-        add_section note_name, SHT::NOTE, note_flags, 0, off, note.num_bytes,0,0,note_align, sect.entsize
+    def note
+      @file.notes do |name,note|
+        addr = @layout << OutputSection.new(name, SHT::NOTE, note_flags, nil, note.num_bytes,0,0,note_align, sect.entsize)
       end
-      #TODO:Add PHDR
-      #      @file.note.each do |
+#TODO: add phdr
     end
     
-    def write_dynsym
+    def dynsym
     end # Produce a hash and a GNU_HASH as well
-    def write_dynamic
+    def dynamic
     end # Write note, etc for the above
     def write_phdr(filehdr)
       #Assemble phdrs
     end 
-    def write_reladyn()
+    def reladyn()
     end
-    def write_shstrtab() # Last section written
-     
-      name = ".shstrtab"
-      @shstrtab.add_string name
-      idx = add_section name, SHT::SHT_STRTAB, 0, 0, @buf.tell, @shstrtab.buf.size,0,0,0,0
-
-      @buf.write  @shstrtab.buf.string
-      idx
-    end
-    def write_shdr(filehdr)
-      #      @buf.align 8 # See if this has a performance advantage/
-      #      makes less tools crash 
-      filehdr.shstrndx = write_shstrtab
-      filehdr.shoff = @buf.tell
-      filehdr.shentsize = @shdrs[0].num_bytes
-      filehdr.shnum = @shdrs.size
-      @shdrs.write buf
-    end
-
     def write_headers
       hdr = @factory.hdr.new
       case @file.endian
@@ -663,8 +740,8 @@ module Writer
       hdr.entry = @file.entry
       hdr.flags = @file.flags
       
-      write_phdr(hdr)
-      write_shdr(hdr)
+      @layout.write_sections(@buf,hdr)
+
       @buf.seek 0 
       hdr.write @buf
     end
@@ -674,11 +751,11 @@ module Writer
     def write_to_buf #Make this memoized
       @buf.seek @factory.hdr.new.num_bytes #Leave space for header.
       #this is pretty bad
-      write_progbits 
-      write_note
-      write_dynsym
-      write_reladyn
-      write_dynamic
+      progbits 
+      note
+      dynsym
+      reladyn
+      dynamic
       write_headers
     end
 
@@ -687,5 +764,6 @@ end
 end
 
 $parse = Elf::Parser.from_file "/bin/ls"
+Elf::Writer::Writer.to_file("/tmp/tst",$parse)
 #pp parse # .instance_variables
 ##TODO: Do enums as custom records.
