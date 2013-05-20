@@ -29,6 +29,8 @@ module Elf
   SHT = ElfFlags::SectionType
   SHF = ElfFlags::SectionFlags
   ET = ElfFlags::Type
+  PT = ElfFlags::PhdrType
+  PF = ElfFlags::PhdrFlags
   NOTE_ALIGN = 4
   NOTE_FLAGS = SHF::SHF_ALLOC
   NOTE_ENTSIZE =0
@@ -402,7 +404,7 @@ module Elf
          expect_value "Note size",n.num_bytes, note.siz 
       } ]
     end
-    PT = ElfFlags::PhdrType
+
     def parse_phdrs()
       #TODO: validate flags
       by_type = @phdrs.group_by{|x| x.type.to_i}
@@ -419,7 +421,7 @@ module Elf
       end
 
       process_unique.call(PT::PT_PHDR).andand do |pt_phdr|
-        expect_value "PHDR offset",pt_phdr.off, @hdr.phoff
+        expect_value "PHD offset",pt_phdr.off, @hdr.phoff
         expect_value "PHDR size",pt_phdr.filesz, @hdr.phnum * @hdr.phentsize
       end
 
@@ -572,14 +574,17 @@ module Writer
     end
     
   end
+ 
   class Layout
     def initialize(factory)
       @layout_by_flags = {}
       @layout = RBTree.new()
       @shstrtab = StringTable.new()
       @factory = factory
+      @phdrs = [] #BinData::Array.new(:type => @factory.phdr)
+
     end
-    def <<(*sections)       #Ordering as follows: Fixed
+    def add(*sections)       #Ordering as follows: Fixed
       #(non-nil vaddrs) go where they have to go
       # Flexible sections are added to lowest hole after section of
       # the same type
@@ -600,6 +605,11 @@ module Writer
         @layout_by_flags[i.flags][i.vaddr] = i
       }
     end 
+    def add_with_phdr(sections,type,flags) 
+      self.add *sections
+      @phdrs << [sections,type,flags]
+    
+    end
     def shstrtab(buf) # Last section written, TODO: Move to layout
       name = ".shstrtab"
       idx = @shstrtab.add_string name
@@ -612,10 +622,55 @@ module Writer
       x
     end
 
+    LoadMap = Struct.new(:off,:end,:vaddr,:flags,:align)
+    def write_phdrs(buf,filehdr,load)
+      phdrs = BinData::Array.new(:type => @factory.phdr)
+      @phdrs.each {|x|
+        sections, type,flags =*x
+        x =  @factory.phdr.new
+        x.align = sections.map(&:align).max
+        x.vaddr = sections.map(&:vaddr).min
+        x.paddr = x.vaddr
+        x.filesz = sections.map(&:end).max - x.vaddr
+        x.memsz = x.filesz
+        x.flags = flags
+        x.off = sections.map(&:off).min
+        x.type = type
+        phdrs.push x
+      }
+      load.each {|l|
+        phdrs.push @factory.phdr.new.tap {|x|
+          x.align = l.align
+          x.vaddr = l.vaddr
+          x.paddr = x.vaddr
+          x.type = PT::PT_LOAD
+          x.filesz = l.end - l.off#TODO: handle nobits
+          x.memsz = x.filesz
+          x.off = l.off
+          x.flags = PF::PF_R
+
+          x.flags |= PF::PF_W if(l.flags & SHF::SHF_WRITE)
+          x.flags |= PF::PF_X if(l.flags & SHF::SHF_EXECINSTR)
+
+        }
+      }
+      pp load
+      filehdr.phoff = buf.tell
+      filehdr.phentsize = @factory.phdr.new.num_bytes
+      filehdr.phnum = phdrs.size
+      phdrs.write buf
+
+    end
     def write_sections(buf,filehdr)
       sections = @layout.to_a.sort_by(&:first).map(&:last)
+      #Get more clever about mapping files
+      
       shdrs = BinData::Array.new(:type=>@factory.shdr).push *sections.map{ |s|
-        off = roundup(buf.tell,s.align)
+        expect_value "aligned to vaddr", 0,s.vaddr % s.align
+        #expect_value "aligned to pagesize",0, PAGESIZE % s.align
+        
+        off = align_mod(buf.tell,s.vaddr, PAGESIZE)
+        
         s.off = off
         buf.seek off
         buf.write(s.data)
@@ -632,13 +687,27 @@ module Writer
         x.entsize= s.entsize
         x
       }
+      #remove
+      mapped = sections.select{|x| x.flags & SHF::SHF_ALLOC != 0}.sort_by(&:vaddr)
+      mapped.each_cons(2){|low,high| expect_value "Mapped sections should not overlap", true,low.vaddr + low.siz<= high.vaddr}
+      load = mapped.group_by(&:flags).map{|flags,sections|
+        pp flags
+        sections.group_by{|x| x.vaddr - x.off}.map do |align,sections|
+          LoadMap.new(sections.first.off,sections.last.off + sections.last.siz, sections.first.vaddr,flags,sections.map(&:align).max) #TODO: LCM?
+        end
+      }.flatten 
+   
+      
+      
+
       shdrs << shstrtab(buf)
       filehdr.shstrndx = shdrs.size - 1
       filehdr.shoff = buf.tell 
       filehdr.shentsize = shdrs[0].num_bytes
       filehdr.shnum = shdrs.size
-    
       shdrs.write buf      
+      
+      write_phdrs(buf,filehdr,load)
     end
     private
   def allocate_sections(chunk)
@@ -655,6 +724,7 @@ module Writer
     end
     chunk.each  do |section|
       section.vaddr = roundup(addr + section.siz,align)
+      addr = section.end
     end
   end
   def roundup(number, align)
@@ -666,6 +736,15 @@ module Writer
       number + align - (number % align)
     end
   end
+  def align_mod(number,align,mod)
+    align = align % mod
+    x = number  + align -  number % mod
+    if(x<number)
+      x+mod
+    else
+      x 
+    end
+  end
   def range_available?(tree,from,to)
     if tree.empty?
       true
@@ -675,11 +754,11 @@ module Writer
     end
   end
 end
- 
+     PAGESIZE = 1 << 12  #KLUDGE: largest pagesize , align everything to 
   #TODO: Needs a unique class for 'allocatable' sections. 
   #Then just sort, and write them out
   class Writer #TODO: Completely refactor this
-      PAGESIZE = 2^16  #KLUDGE: largest pagesize , align everything to
+
     #pagesizes 
     def initialize(file,factory)
       @factory = factory
@@ -697,19 +776,18 @@ end
     end
     attr_reader :buf
     private
-
     def progbits
       (@file.progbits + @file.nobits).each do |sect| 
-        @layout << OutputSection.new(sect.name,sect.sect_type, sect.flags, sect.addr, sect.size,0,0,sect.align, sect.entsize, sect.data.string)
+        @layout.add OutputSection.new(sect.name,sect.sect_type, sect.flags, sect.addr, sect.size,0,0,sect.align, sect.entsize, sect.data.string)
       end
     end
     def note
-      @file.notes.each do |name,note|
-        addr = @layout << OutputSection.new(name, SHT::SHT_NOTE, NOTE_FLAGS, nil, note.num_bytes,0,0,NOTE_ALIGN, NOTE_ENTSIZE,note.to_binary_s)
-      end
+      os= @file.notes.map {|name,note|
+         OutputSection.new(name, SHT::SHT_NOTE, NOTE_FLAGS, nil, note.num_bytes,0,0,NOTE_ALIGN, NOTE_ENTSIZE,note.to_binary_s)
+      }
+      @layout.add_with_phdr os, PT::PT_NOTE, PF::PF_R
 #TODO: add phdr
     end
-    
     def dynsym
     end # Produce a hash and a GNU_HASH as well
     def dynamic
