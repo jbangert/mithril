@@ -118,7 +118,7 @@ module Elf
   class ElfFile
     attr_accessor :filetype, :machine, :entry, :flags, :version
     attr_accessor :progbits, :nobits, :dynamic, :symbols, :relocations
-    attr_accessor :notes, :bits, :endian
+    attr_accessor :notes, :bits, :endian, :interp
   end
   class Parser
     attr_reader :file
@@ -189,7 +189,7 @@ module Elf
       @data.seek shdr.off
       @unparsed_sections.delete shdr.index
       expect_value "PROGBITS link",shdr.link,0
-      ProgBits.new(@shstrtab[shdr.name], shdr,  @data.read(shdr.siz))
+      ProgBits.new(@shstrtab[shdr.name], shdr.snapshot,  @data.read(shdr.siz))
     end
     DYNAMIC_FLAGS =            {
       DT::DT_TEXTREL=>:@textrel,
@@ -441,7 +441,8 @@ module Elf
         #own section. Instead just check what is at that vaddr
         interp_section = @progbits.select {|x| x.addr  == pt_interp.vaddr.to_i}.first
         expect_value ".interp section", interp_section.nil?, false
-        @interp = interp_section.data.read
+        @file.interp = interp_section.data.read
+        @progbits.delete interp_section
       end
       process_unique.call(PT::PT_DYNAMIC).andand do |pt_dynamic|
         dynamic_section = @sect_types[SHT::SHT_DYNAMIC].first
@@ -649,8 +650,8 @@ module Writer
           x.off = l.off
           x.flags = PF::PF_R
 
-          x.flags |= PF::PF_W if(l.flags & SHF::SHF_WRITE)
-          x.flags |= PF::PF_X if(l.flags & SHF::SHF_EXECINSTR)
+          x.flags |= PF::PF_W if(l.flags & SHF::SHF_WRITE != 0)
+          x.flags |= PF::PF_X if(l.flags & SHF::SHF_EXECINSTR != 0)
 
         }
       }
@@ -667,10 +668,12 @@ module Writer
       
       shdrs = BinData::Array.new(:type=>@factory.shdr).push *sections.map{ |s|
         expect_value "aligned to vaddr", 0,s.vaddr % s.align
-        #expect_value "aligned to pagesize",0, PAGESIZE % s.align
-        
-        off = align_mod(buf.tell,s.vaddr, PAGESIZE)
-        
+        #expect_value "aligned to pagesize",0, PAGESIZE % s.align 
+        if s.flags & SHF::SHF_ALLOC != 0
+          off = align_mod(buf.tell,s.vaddr, PAGESIZE)        
+        else
+          off = buf.tell
+        end
         s.off = off
         buf.seek off
         buf.write(s.data)
@@ -681,8 +684,8 @@ module Writer
         x.vaddr  = s.vaddr
         x.off    = s.off
         x.siz    = s.siz
-        x.link   = s.link
-        x.info   = s.info
+        x.link   = s.link #TODO: fix link, info
+        x.info   = s.info #TODO: fix link, info
         x.addralign  = s.align
         x.entsize= s.entsize
         x
@@ -695,11 +698,9 @@ module Writer
         sections.group_by{|x| x.vaddr - x.off}.map do |align,sections|
           LoadMap.new(sections.first.off,sections.last.off + sections.last.siz, sections.first.vaddr,flags,sections.map(&:align).max) #TODO: LCM?
         end
-      }.flatten 
-   
-      
-      
 
+      }.flatten     
+      
       shdrs << shstrtab(buf)
       filehdr.shstrndx = shdrs.size - 1
       filehdr.shoff = buf.tell 
@@ -786,16 +787,40 @@ end
          OutputSection.new(name, SHT::SHT_NOTE, NOTE_FLAGS, nil, note.num_bytes,0,0,NOTE_ALIGN, NOTE_ENTSIZE,note.to_binary_s)
       }
       @layout.add_with_phdr os, PT::PT_NOTE, PF::PF_R
-#TODO: add phdr
+      #TODO: add phdr
     end
-    def dynsym
+    def interp
+      if(@file.interp)
+        interp  = BinData::Stringz.new(@file.interp)
+        pp interp.snapshot
+        @layout.add_with_phdr [OutputSection.new(".interp",SHT::SHT_PROGBITS, SHF::SHF_ALLOC, nil, interp.num_bytes,0,0,1,0,interp.to_binary_s)], PT::PT_INTERP, PF::PF_R
+      end
+    end
+    def make_symtab(name,symbols,strtab)
+    end
+    def dynsym(dynstrtab)
+      symtab = BinData::Array.new(:type => @factory.sym)
+      @file.symbols.values.select(&:is_dynamic).each do |sym|
+        #@factory.new
+      end
     end # Produce a hash and a GNU_HASH as well
     def dynamic
+      @dynamic = BinData::Array.new(:type => @factory.dyn)
+      @dynamic[0] = @factory.dyn.new(tag: DT::DT_NULL, val: 0)
+      dynstrtab = StringTable.new()
+      reladyn(dynstrtab)
+      
+      @layout.add_with_phdr [OutputSection.new(".dynamic", SHT::SHT_DYNAMIC, SHF::SHF_ALLOC, nil, @dynamic.num_bytes,0,0,1,0,@dynamic.to_binary_s)], PT::PT_DYNAMIC, PF::PF_R
+      #dynstr -> STRTAB STRSZ
+      #dynsym -> DT_SYMENT, D
     end # Write note, etc for the above
-    def write_phdr(filehdr)
-      #Assemble phdrs
-    end 
-    def reladyn()
+
+    def reladyn(dynstrtab)
+      @file.relocations.each{ |r|
+        r.symbol.is_dynamic  = true
+      }
+      dynsym(dynstrtab)
+      
     end
     def write_headers
       hdr = @factory.hdr.new
@@ -836,9 +861,8 @@ end
       #this is pretty bad
       progbits 
       note
-      dynsym
-      reladyn
       dynamic
+      interp
       write_headers
     end
 
@@ -850,3 +874,4 @@ $parse = Elf::Parser.from_file "/bin/ls"
 Elf::Writer::Writer.to_file("/tmp/tst",$parse)
 #pp parse # .instance_variables
 ##TODO: Do enums as custom records.
+
