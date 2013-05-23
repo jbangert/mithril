@@ -118,7 +118,7 @@ module Elf
   class ElfFile
     attr_accessor :filetype, :machine, :entry, :flags, :version
     attr_accessor :progbits, :nobits, :dynamic, :symbols, :relocations
-    attr_accessor :notes, :bits, :endian, :interp
+    attr_accessor :notes, :bits, :endian, :interp, :extra_phdrs
   end
   class Parser
     attr_reader :file
@@ -450,10 +450,10 @@ module Elf
         expect_value "PT_dynamic offset" , pt_dynamic.off, dynamic_section.off
         expect_value "PT_dynamic size", pt_dynamic.filesz, dynamic_section.siz
       end
-      @extra_phdrs  = by_type.values.flatten
-      unless(@extra_phdrs.empty?)
+      @file.extra_phdrs  = by_type.values.flatten
+      unless(@file.extra_phdrs.empty?)
         print "Unparsed PHDR\n"
-        pp @extra_phdrs
+        pp @file.extra_phdrs
       end
     end
     def parse_with_factory()
@@ -626,6 +626,7 @@ module Writer
     LoadMap = Struct.new(:off,:end,:vaddr,:flags,:align)
     def write_phdrs(buf,filehdr,load)
       phdrs = BinData::Array.new(:type => @factory.phdr)
+      expect_value "Too many PHDRS",true, @phdrs.size + load.size < RESERVED_PHDRS
       @phdrs.each {|x|
         sections, type,flags =*x
         x =  @factory.phdr.new
@@ -662,10 +663,13 @@ module Writer
       phdrs.write buf
 
     end
+    RESERVED_PHDRS = 64 
     def write_sections(buf,filehdr)
       sections = @layout.to_a.sort_by(&:first).map(&:last)
       #Get more clever about mapping files
-      
+      # We put actual program headers right at the beginning.
+      phdr_off = buf.tell
+      buf.seek phdr_off + RESERVED_PHDRS * @factory.phdr.new.num_bytes
       shdrs = BinData::Array.new(:type=>@factory.shdr).push *sections.map{ |s|
         expect_value "aligned to vaddr", 0,s.vaddr % s.align
         #expect_value "aligned to pagesize",0, PAGESIZE % s.align 
@@ -708,6 +712,7 @@ module Writer
       filehdr.shnum = shdrs.size
       shdrs.write buf      
       
+      buf.seek phdr_off
       write_phdrs(buf,filehdr,load)
     end
     private
@@ -799,10 +804,12 @@ end
     def make_symtab(name,symbols,strtab)
     end
     def dynsym(dynstrtab)
-      symtab = BinData::Array.new(:type => @factory.sym)
-      @file.symbols.values.select(&:is_dynamic).each do |sym|
-        #@factory.new
-      end
+      #symtab = BinData::Array.new(:type => @factory.sym)
+      #@file.symbols.values.select(&:is_dynamic).each do |sym|
+      #  s = @factory.new.sym
+      #  s.name = dynstrtab.add_string(sym.name)
+      #  s.section =
+      #end
     end # Produce a hash and a GNU_HASH as well
     def dynamic
       @dynamic = BinData::Array.new(:type => @factory.dyn)
@@ -841,7 +848,7 @@ end
         raise ArgumentError.new "Invalid class"
       end
       hdr.ident.id_version = ElfFlags::Version::EV_CURRENT
-      
+      hdr.ehsize = hdr.num_bytes
       hdr.type = @file.filetype
       hdr.machine = @file.machine
       hdr.version = @file.version
@@ -872,6 +879,7 @@ end
 
 $parse = Elf::Parser.from_file "/bin/ls"
 Elf::Writer::Writer.to_file("/tmp/tst",$parse)
+`chmod +x /tmp/tst`
 #pp parse # .instance_variables
 ##TODO: Do enums as custom records.
 
