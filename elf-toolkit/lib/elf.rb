@@ -28,6 +28,8 @@ module Elf
   DT = ElfFlags::DynamicType
   SHT = ElfFlags::SectionType
   SHF = ElfFlags::SectionFlags
+  SHN = ElfFlags::SpecialSection
+  STB = ElfFlags::SymbolBinding
   ET = ElfFlags::Type
   PT = ElfFlags::PhdrType
   PF = ElfFlags::PhdrFlags
@@ -76,7 +78,7 @@ module Elf
     end
   end
   class NoBits
-    attr_accessor :name, :addr, :flags, :align
+    attr_accessor :name, :addr, :flags, :align, :index
     def initialize(name,shdr)
       @name = name
       @addr = shdr.vaddr
@@ -104,7 +106,7 @@ module Elf
   class Symbol #All values here are section offsets
     attr_accessor :name, :section,:type, :sectoffset, :bind, :size,:is_dynamic
     def initialize(name,section,type,sectoffset, bind,size)
-      @name,@section, @type, @sectoffset, @bind, @size = name,section,type,sectoffset, bind,size
+      @name,@section, @type, @sectoffset, @bind, @size = name.to_s,section,type,sectoffset, bind,size
       @is_dynamic = false
     end
   end
@@ -178,7 +180,21 @@ module Elf
       @unparsed_sections.delete sect.index
       BinData::Array.new( :type=> @factory.sym, :initial_length => sect.siz / sect.entsize).read(@data).map do |sym|
         #TODO: find appropriate section
-        Symbol.new(strtab[sym.name],sym.shndx.to_i, sym.type.to_i, sym.val.to_i, sym.binding.to_i, sym.siz.to_i)
+        if sym.shndx.to_i == 0  || sym.shndx.to_i == SHN::SHN_ABS
+          #TODO: Find section by vaddr
+          section =  nil
+          value = sym.val.to_i
+        else
+          section = @bits_by_index[sym.shndx.to_i] 
+          if([ET::ET_EXEC, ET::ET_DYN].include? @file.filetype)
+            value = sym.val.to_i - section.addr #TODO: Only if absolute.
+          else 
+            value = sym.val.to_i
+          end
+          expect_value "Section index #{sym.shndx.to_i} in symbol should be in progbits", false, section.nil?
+        end
+        
+        Symbol.new(strtab[sym.name],section, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)
       end
     end
     def parse_nobits(shdr)
@@ -208,7 +224,7 @@ module Elf
       if sect_idx == 0 and uses_addresses
         applies_to = nil
       else
-        applies_to = @progbits_by_index[sect_idx]
+        applies_to = @bits_by_index[sect_idx]
         raise ArgumentError.new "Section index #{sect_idx} not referring to PROGBITS for relocation table" if applies_to.nil?
       end
       relocations.map {|rel_entry|
@@ -492,11 +508,12 @@ module Elf
       #Keep a hash of sections by type
       @sect_types = @shdrs.group_by {|x| x.type.to_i}
       #TODO: keep track which    #sections we have already parsed to find unparsed sections
-      @progbits_by_index = Hash.new.tap{|h| @sect_types[SHT::SHT_PROGBITS].each { |s| h[s.index] = parse_progbits(s)} }
-      @progbits = @progbits_by_index.values
+      @bits_by_index = Hash.new.tap{|h| @sect_types[SHT::SHT_PROGBITS].each { |s| h[s.index] = parse_progbits(s)} }
+      @progbits = @bits_by_index.values
       @file.progbits = @progbits
 
-      @nobits = @sect_types[SHT::SHT_NOBITS].map{ |x| parse_nobits x}
+      @nobits = @sect_types[SHT::SHT_NOBITS].map{ |x| parse_nobits(x).tap{|y| y.index = x.index}}
+      @nobits.each{|nobit| @bits_by_index[nobit.index] = nobit}
       @file.nobits = @nobits
 
       @relocatable_sections = SegmentTree.new(Hash.new.tap{|h|
@@ -561,9 +578,11 @@ module Writer
       end
       @strings[string]
     end      
+    def buf()
+      @buf
+    end
   end
   class OutputSection 
-
     attr_accessor :name, :type,:flags,:vaddr,:siz,:link,:info, :align, :entsize, :data, :shdr, :off
     # TODO: Use params array
     def initialize(name,type,flags,vaddr,siz,link,info,align,entsize,data) #link and info are strings, offset is done by output stage
@@ -609,7 +628,6 @@ module Writer
     def add_with_phdr(sections,type,flags) 
       self.add *sections
       @phdrs << [sections,type,flags]
-    
     end
     def shstrtab(buf) # Last section written, TODO: Move to layout
       name = ".shstrtab"
@@ -656,7 +674,7 @@ module Writer
 
         }
       }
-      pp load
+#      pp load
       filehdr.phoff = buf.tell
       filehdr.phentsize = @factory.phdr.new.num_bytes
       filehdr.phnum = phdrs.size
@@ -670,6 +688,7 @@ module Writer
       # We put actual program headers right at the beginning.
       phdr_off = buf.tell
       buf.seek phdr_off + RESERVED_PHDRS * @factory.phdr.new.num_bytes
+      
       shdrs = BinData::Array.new(:type=>@factory.shdr).push *sections.map{ |s|
         expect_value "aligned to vaddr", 0,s.vaddr % s.align
         #expect_value "aligned to pagesize",0, PAGESIZE % s.align 
@@ -680,7 +699,14 @@ module Writer
         end
         s.off = off
         buf.seek off
-        buf.write(s.data)
+        buf.write(s.data) 
+        link_value = lambda do |name|
+          if name.is_a? String
+            sections.to_enum.with_index.select {|sect,idx| sect.name == name}.first.last rescue raise RuntimeError.new("Invalid Section reference #{name}") #Index of first match TODO: check unique
+          else
+            name || 0
+          end
+        end
         x=  @factory.shdr.new
         x.name   = @shstrtab.add_string(s.name)
         x.type   = s.type
@@ -688,8 +714,8 @@ module Writer
         x.vaddr  = s.vaddr
         x.off    = s.off
         x.siz    = s.siz
-        x.link   = s.link #TODO: fix link, info
-        x.info   = s.info #TODO: fix link, info
+        x.link   = link_value.call(s.link) 
+        x.info   = link_value.call(s.info)
         x.addralign  = s.align
         x.entsize= s.entsize
         x
@@ -698,11 +724,9 @@ module Writer
       mapped = sections.select{|x| x.flags & SHF::SHF_ALLOC != 0}.sort_by(&:vaddr)
       mapped.each_cons(2){|low,high| expect_value "Mapped sections should not overlap", true,low.vaddr + low.siz<= high.vaddr}
       load = mapped.group_by(&:flags).map{|flags,sections|
-        pp flags
         sections.group_by{|x| x.vaddr - x.off}.map do |align,sections|
           LoadMap.new(sections.first.off,sections.last.off + sections.last.siz, sections.first.vaddr,flags,sections.map(&:align).max) #TODO: LCM?
         end
-
       }.flatten     
       
       shdrs << shstrtab(buf)
@@ -802,22 +826,43 @@ end
       end
     end
     def make_symtab(name,symbols,strtab)
+      
     end
     def dynsym(dynstrtab)
-      #symtab = BinData::Array.new(:type => @factory.sym)
-      #@file.symbols.values.select(&:is_dynamic).each do |sym|
-      #  s = @factory.new.sym
-      #  s.name = dynstrtab.add_string(sym.name)
-      #  s.section =
-      #end
+      symtab = BinData::Array.new(:type => @factory.sym)
+      syms = @file.symbols.values.select(&:is_dynamic)
+
+      syms.each do |sym|
+        s = @factory.sym.new
+        s.name = dynstrtab.add_string(sym.name)
+        s.type = sym.type
+        s.binding = sym.bind
+        s.shndx = 0
+        unless sym.section.nil?
+          expect_value "valid symbol offset",  sym.sectoffset < sym.section.size,true
+        end
+        s.val = (sym.section.andand.addr || 0) + sym.sectoffset
+        s.siz = sym.size
+        symtab.push s
+      end
+      last_local_idx = syms.to_enum.with_index.select{|v,i| v.bind == STB::STB_LOCAL}.andand.last.andand.last || -1
+      dynsym = OutputSection.new(".dynsym",SHT::SHT_DYNSYM, SHF::SHF_ALLOC, nil,symtab.num_bytes,".dynstr", last_local_idx+1,1,@factory.sym.new.num_bytes, symtab.to_binary_s)
+      @layout.add dynsym
+      @dynamic << @factory.dyn.new(tag: DT::DT_SYMTAB,val: dynsym.vaddr)
+      @dynamic << @factory.dyn.new(tag: DT::DT_SYMENT,val: @factory.sym.new.num_bytes)
+      
     end # Produce a hash and a GNU_HASH as well
     def dynamic
       @dynamic = BinData::Array.new(:type => @factory.dyn)
-      @dynamic[0] = @factory.dyn.new(tag: DT::DT_NULL, val: 0)
       dynstrtab = StringTable.new()
       reladyn(dynstrtab)
       
-      @layout.add_with_phdr [OutputSection.new(".dynamic", SHT::SHT_DYNAMIC, SHF::SHF_ALLOC, nil, @dynamic.num_bytes,0,0,1,0,@dynamic.to_binary_s)], PT::PT_DYNAMIC, PF::PF_R
+      dynstr = OutputSection.new(".dynstr", SHT::SHT_STRTAB, SHF::SHF_ALLOC,nil, dynstrtab.buf.size, 0,0,1,0,dynstrtab.buf)
+      @layout.add dynstr
+      @dynamic << @factory.dyn.new(tag: DT::DT_STRTAB, val: dynstr.vaddr)
+      @dynamic << @factory.dyn.new(tag: DT::DT_STRSZ, val: dynstr.siz)
+      @dynamic <<  @factory.dyn.new(tag: DT::DT_NULL, val: 0)
+      @layout.add_with_phdr [OutputSection.new(".dynamic", SHT::SHT_DYNAMIC, SHF::SHF_ALLOC, nil, @dynamic.num_bytes,".dynstr",0,8,@factory.dyn.new.num_bytes,@dynamic.to_binary_s)], PT::PT_DYNAMIC, PF::PF_R
       #dynstr -> STRTAB STRSZ
       #dynsym -> DT_SYMENT, D
     end # Write note, etc for the above
