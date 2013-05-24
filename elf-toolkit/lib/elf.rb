@@ -237,8 +237,8 @@ module Elf
             rel.section = applies_to
             rel.offset = rel_entry.off
           end
-          rel.type = @factory.rel_info_type(rel_entry.info)
-          rel.symbol = symtab[ @factory.rel_info_sym(rel_entry.info)]
+          rel.type = rel_entry.type
+          rel.symbol = symtab[ rel_entry.sym]
           rel.addend = rel_entry.addend
         }
       }
@@ -398,11 +398,11 @@ module Elf
       by_type.delete DT::DT_JMPREL
 
       retval.debug_val = []
-      by_type[DT::DT_DEBUG].each {|x| retval.debug_val << x}
+      by_type[DT::DT_DEBUG].each {|x| retval.debug_val << x.val}
       by_type.delete DT::DT_DEBUG
 
       #TODO: gnu extensions
-      retval.extra_dynamic = by_type.values.flatten
+      retval.extra_dynamic = by_type.values.flatten.map(&:snapshot)
       unless by_type.empty?
         print "Warning, unparsed dynamic entries \n"
         pp by_type
@@ -831,8 +831,8 @@ end
     def dynsym(dynstrtab)
       symtab = BinData::Array.new(:type => @factory.sym)
       syms = @file.symbols.values.select(&:is_dynamic)
-
-      syms.each do |sym|
+      @dynsym = {}
+      syms.to_enum.with_index.each do |sym,idx|
         s = @factory.sym.new
         s.name = dynstrtab.add_string(sym.name)
         s.type = sym.type
@@ -843,6 +843,7 @@ end
         end
         s.val = (sym.section.andand.addr || 0) + sym.sectoffset
         s.siz = sym.size
+        @dynsym[sym] = idx
         symtab.push s
       end
       last_local_idx = syms.to_enum.with_index.select{|v,i| v.bind == STB::STB_LOCAL}.andand.last.andand.last || -1
@@ -856,23 +857,72 @@ end
       @dynamic = BinData::Array.new(:type => @factory.dyn)
       dynstrtab = StringTable.new()
       reladyn(dynstrtab)
-      
-      dynstr = OutputSection.new(".dynstr", SHT::SHT_STRTAB, SHF::SHF_ALLOC,nil, dynstrtab.buf.size, 0,0,1,0,dynstrtab.buf)
-      @layout.add dynstr
+      #PHDR
+      @file.dynamic.needed.each{|lib|
+        @dynamic << @factory.dyn.new(tag: DT::DT_NEEDED, val: dynstrtab.add_string(lib))
+      }
+      section_tag = lambda {|tag,value|
+        unless(value.nil?)
+          @dynamic << @factory.dyn.new(tag: tag, val: value.addr)
+        end
+      }
+      section_tag.call(DT::DT_PLTGOT,@file.dynamic.pltgot)
+      section_tag.call(DT::DT_INIT,@file.dynamic.init)
+      section_tag.call(DT::DT_FINI,@file.dynamic.fini)
+      #@file.dynamic.debug_val.each {|dbg| 
+      #  @dynamic << @factory.dyn.new(tag: DT::DT_DEBUG, val: dbg)
+      #}
+      #@file.dynamic.extra_dynamic.each{ |extra|
+      #  @dynamic << @factory.dyn.new(tag: extra[:tag], val: extra[:val])
+      #}
+
+      #string table
+      dynstr = OutputSection.new(".dynstr", SHT::SHT_STRTAB, SHF::SHF_ALLOC,nil, dynstrtab.buf.size, 0,0,1,0,dynstrtab.buf.string)
+      @layout.add dynstr 
       @dynamic << @factory.dyn.new(tag: DT::DT_STRTAB, val: dynstr.vaddr)
       @dynamic << @factory.dyn.new(tag: DT::DT_STRSZ, val: dynstr.siz)
-      @dynamic <<  @factory.dyn.new(tag: DT::DT_NULL, val: 0)
+
+      @dynamic <<  @factory.dyn.new(tag: DT::DT_NULL, val: 0) # End marker
       @layout.add_with_phdr [OutputSection.new(".dynamic", SHT::SHT_DYNAMIC, SHF::SHF_ALLOC, nil, @dynamic.num_bytes,".dynstr",0,8,@factory.dyn.new.num_bytes,@dynamic.to_binary_s)], PT::PT_DYNAMIC, PF::PF_R
       #dynstr -> STRTAB STRSZ
       #dynsym -> DT_SYMENT, D
     end # Write note, etc for the above
-
+    def rela_buffer(relocations)
+      BinData::Array.new(:type =>@factory.rela).new.tap{|retval|
+        relocations.each {|rel|
+          entry = @factory.rela.new
+          entry.off = rel.section.addr + rel.offset
+          entry.sym = @dynsym[rel.symbol]  #TODO: Find constant for
+          #SHN undef
+          entry.type = rel.type
+          entry.addend = rel.addend
+          retval.push entry
+        }
+      }
+    end
     def reladyn(dynstrtab)
       @file.relocations.each{ |r|
         r.symbol.is_dynamic  = true
       }
       dynsym(dynstrtab)
-      
+      relaentsize = @factory.rela.new.num_bytes
+      rel_by_section = @file.relocations.select(&:is_dynamic).group_by(&:section)
+      if(rel_by_section[@file.dynamic.pltgot]) 
+        relabuf=rela_buffer(rel_by_section[@file.dynamic.pltgot])
+        relaplt = OutputSection.new(".rela.plt", SHT::SHT_RELA, SHF::SHF_ALLOC, nil, relabuf.num_bytes,".dynsym",@file.dynamic.pltgot.name,relaentsize, relaentsize, relabuf.to_binary_s)
+        @layout.add relaplt
+        @dynamic << @factory.dyn.new(tag: DT::DT_PLTRELSZ, val: relabuf.num_bytes)
+        @dynamic << @factory.dyn.new(tag: DT::DT_PLTREL, val: DT::DT_RELA)
+        @dynamic << @factory.dyn.new(tag: DT::DT_JMPREL, val: relaplt.vaddr)
+        rel_by_section.delete @file.dynamic.pltgot
+      end
+      #All other relocations go into .rela.dyn
+      relabuf = rela_buffer(rel_by_section.values.flatten)
+      reladyn = OutputSection.new(".rela.dyn", SHT::SHT_RELA, SHF::SHF_ALLOC,nil, relabuf.num_bytes,".dynsym",0, relaentsize, relaentsize, relabuf.to_binary_s)
+      @layout.add reladyn
+      @dynamic << @factory.dyn.new(tag: DT::DT_RELA, val: reladyn.vaddr)
+      @dynamic << @factory.dyn.new(tag: DT::DT_RELASZ, val: reladyn.siz)     
+      @dynamic << @factory.dyn.new(tag: DT::DT_RELAENT, val: relaentsize)
     end
     def write_headers
       hdr = @factory.hdr.new
@@ -925,6 +975,7 @@ end
 $parse = Elf::Parser.from_file "/bin/ls"
 Elf::Writer::Writer.to_file("/tmp/tst",$parse)
 `chmod +x /tmp/tst`
+#binding.pry
 #pp parse # .instance_variables
 ##TODO: Do enums as custom records.
 

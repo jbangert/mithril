@@ -87,12 +87,43 @@ module ElfStructs
   end
 # * Relocation entries
 #  Relocations that don't need an addend field. */
+  def rel_common
+    case @bits
+    when 32
+      define_method :sym do 
+         info.to_i >> 8
+      end
+      define_method :type do
+        info.to_i & 0xff
+      end
+      define_method :sym= do |val|
+        self.info = type | (val << 8)
+      end
+      define_method :type= do |val|
+        self.info = (val &0xff) | (sym << 8)
+      end
+    when 64
+      define_method :sym do 
+         info.to_i >> 32
+      end
+      define_method :type do
+        info.to_i & 0xffffffff
+      end
+      define_method :sym= do |val|
+        self.info = type | (val << 32)
+      end
+      define_method :type= do |val|
+        self.info = (val &0xffffffff) | (sym << 32)
+      end      
+    end
+  end
   def rel
     addr :off #Location to be relocated.
     xword :info #Relocation type and symbol index.
     define_method :addend do
       nil
     end
+    rel_common
   end
 
 # Relocations that need an addend field. */
@@ -100,6 +131,7 @@ module ElfStructs
     addr :off #Location to be relocated.
     xword :info #Relocation type and symbol index.
     sxword :addend #Addend.
+    rel_common
   end
 
 #Elf Symbol
@@ -112,11 +144,11 @@ module ElfStructs
     end
     define_method :type= do |val|
       raise RuntimeError.new "Invalid param" unless val & 0xf == val
-      info = (info&0xf0) | val 
+      self.info = (info&0xf0) | val 
     end 
     define_method :binding= do |val|
       raise RuntimeError.new "Invalid param" unless val & 0xf == val
-      info = (info&0xf) | (val << 4)
+      self.info = (info&0xf) | (val << 4)
     end
   end
   def sym32
@@ -148,8 +180,8 @@ module ElfStructs
       64 => :sym64
     }
   }
-  def bitness(bits)
-    
+  def bitness(bits)    
+    @bits = bits
     alias_recordtype :char, :uint8
     case bits
     when 32
