@@ -92,7 +92,10 @@ module Elf
       #      expect_value "PROGBITS entsize", @entsize,0
     end
     def data
-      StringIO.new("")
+      StringIO.new("").tap{|x|
+        x.seek size
+        x.write '\0'
+      }
     end
     def sect_type
       SHT::SHT_NOBITS
@@ -643,7 +646,7 @@ module Writer
       x
     end
 
-    LoadMap = Struct.new(:off,:end,:vaddr,:flags,:align)
+    LoadMap = Struct.new(:off,:end,:vaddr,:memsz,:flags,:align)
     def write_phdrs(buf,filehdr,load)
       phdrs = BinData::Array.new(:type => @factory.phdr)
       expect_value "Too many PHDRS",true, @phdrs.size + load.size < RESERVED_PHDRS
@@ -664,6 +667,7 @@ module Writer
       #
       load.first.andand.tap{|l|
         l.vaddr -= l.off
+        l.memsz += l.off
         l.off = 0
       }
       load.each {|l|
@@ -673,7 +677,7 @@ module Writer
           x.paddr = x.vaddr
           x.type = PT::PT_LOAD
           x.filesz = l.end - l.off#TODO: handle nobits
-          x.memsz = x.filesz
+          x.memsz = x.filesz # l.memsz
           x.off = l.off
           x.flags = PF::PF_R
           x.flags |= PF::PF_W if(l.flags & SHF::SHF_WRITE != 0)
@@ -736,9 +740,19 @@ module Writer
       #remove
       mapped = sections.select{|x| x.flags & SHF::SHF_ALLOC != 0}.sort_by(&:vaddr)
       mapped.each_cons(2){|low,high| expect_value "Mapped sections should not overlap", true,low.vaddr + low.siz<= high.vaddr}
-      load = mapped.group_by(&:flags).map{|flags,sections|
+      load = mapped.group_by(&:flags).map{|flags,sections| # 
         sections.group_by{|x| x.vaddr - x.off}.map do |align,sections|
-          LoadMap.new(sections.first.off,sections.last.off + sections.last.siz, sections.first.vaddr,flags,sections.map(&:align).max) #TODO: LCM?
+          memsize = sections.last.off + sections.last.siz - sections.first.off
+          sections.select{|x| x.type == SHT::SHT_NOBITS}.tap {|nobits|
+            if nobits.size > 0
+              expect_value "At most one NOBITS", nobits.size,1
+              expect_value "NOBITS is the last section",sections.last.type, SHT::SHT_NOBITS
+              last_file_addr = nobits.first.vaddr
+              memsize = sections.last.off - sections.first.off
+            end
+          }
+          LoadMap.new(sections.first.off,  sections.last.off + sections.last.siz,
+                      sections.first.vaddr, memsize,flags,sections.map(&:align).max) #TODO: LCM?
         end
       }.flatten     
       
@@ -799,7 +813,7 @@ module Writer
     end
   end
 end
-     PAGESIZE = 1 << 12  #KLUDGE: largest pagesize , align everything to 
+PAGESIZE = 1 << 12  #KLUDGE: largest pagesize , align everything to 
   #TODO: Needs a unique class for 'allocatable' sections. 
   #Then just sort, and write them out
   class Writer #TODO: Completely refactor this
