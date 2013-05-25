@@ -30,6 +30,7 @@ module Elf
   SHF = ElfFlags::SectionFlags
   SHN = ElfFlags::SpecialSection
   STB = ElfFlags::SymbolBinding
+  STT= ElfFlags::SymbolType
   ET = ElfFlags::Type
   PT = ElfFlags::PhdrType
   PF = ElfFlags::PhdrFlags
@@ -180,7 +181,8 @@ module Elf
       @unparsed_sections.delete sect.index
       BinData::Array.new( :type=> @factory.sym, :initial_length => sect.siz / sect.entsize).read(@data).map do |sym|
         #TODO: find appropriate section
-        if sym.shndx.to_i == 0  || sym.shndx.to_i == SHN::SHN_ABS
+
+        if sym.shndx.to_i == 0  || sym.shndx.to_i == SHN::SHN_ABS || ([ STT::STT_SECTION, STT::STT_OBJECT].include? sym.type.to_i)
           #TODO: Find section by vaddr
           section =  nil
           value = sym.val.to_i
@@ -523,7 +525,7 @@ module Elf
                                               })
 
       parse_phdrs()
-      @symtab = unique_section(@sect_types, ElfFlags::SectionType::SHT_SYMTAB).andand {|symtab| parse_symtable symtab, safe_strtab(symtab.link); @unparsed_sections.delete  }
+      @symtab = unique_section(@sect_types, ElfFlags::SectionType::SHT_SYMTAB).andand {|symtab| parse_symtable symtab, safe_strtab(symtab.link) }
       @dynsym = unique_section(@sect_types, ElfFlags::SectionType::SHT_DYNSYM).andand {|symtab| parse_symtable symtab, safe_strtab(symtab.link) }
       
       @file.symbols = Hash.new.tap{|h| (@symtab || []).each{|sym| h[sym.name] = sym}}
@@ -618,7 +620,7 @@ module Writer
         }
         allocate_sections(sections)
       end
-      
+      #TODO: Handle the damn nobits
       sections.each {|i| 
         expect_value "Sections shouldn't overlap",  range_available?(@layout,i.vaddr,i.end), true
         @layout[i.vaddr] = i 
@@ -645,6 +647,7 @@ module Writer
     def write_phdrs(buf,filehdr,load)
       phdrs = BinData::Array.new(:type => @factory.phdr)
       expect_value "Too many PHDRS",true, @phdrs.size + load.size < RESERVED_PHDRS
+      
       @phdrs.each {|x|
         sections, type,flags =*x
         x =  @factory.phdr.new
@@ -658,6 +661,11 @@ module Writer
         x.type = type
         phdrs.push x
       }
+      #
+      load.first.andand.tap{|l|
+        l.vaddr -= l.off
+        l.off = 0
+      }
       load.each {|l|
         phdrs.push @factory.phdr.new.tap {|x|
           x.align = l.align
@@ -668,12 +676,17 @@ module Writer
           x.memsz = x.filesz
           x.off = l.off
           x.flags = PF::PF_R
-
           x.flags |= PF::PF_W if(l.flags & SHF::SHF_WRITE != 0)
           x.flags |= PF::PF_X if(l.flags & SHF::SHF_EXECINSTR != 0)
 
         }
       }
+      
+      #phdrs.unshift @factory.phdr.new.tap {|x|
+      #  x.align = 4
+      #  x.vaddr = 
+      # x.type = PT::PT_PHDRS
+      #}
 #      pp load
       filehdr.phoff = buf.tell
       filehdr.phentsize = @factory.phdr.new.num_bytes
@@ -736,6 +749,8 @@ module Writer
       filehdr.shnum = shdrs.size
       shdrs.write buf      
       
+      buf.seek roundup(buf.tell, PAGESIZE)-1
+      buf.write '\0' # pad to pagesize
       buf.seek phdr_off
       write_phdrs(buf,filehdr,load)
     end
@@ -825,8 +840,37 @@ end
         @layout.add_with_phdr [OutputSection.new(".interp",SHT::SHT_PROGBITS, SHF::SHF_ALLOC, nil, interp.num_bytes,0,0,1,0,interp.to_binary_s)], PT::PT_INTERP, PF::PF_R
       end
     end
-    def make_symtab(name,symbols,strtab)
-      
+    def elf_hash(value)
+      h=0 
+      g=0
+      value.chars.map(&:ord).each {|char|
+        h = (h << 4) + char
+        g = h & 0xf0000000
+        h = h ^ (g>> 24)
+        h &= ~g
+      }
+      h
+    end
+    def hashtab(table)
+      hashtab = BinData::Array.new(:type => "uint#{@file.bits}#{@file.endian == :big ? 'be' : 'le'}".to_sym)
+      nbuckets = 64
+      nchain  =  table.size
+      hashtab[0] = nbuckets
+      hashtab[1] = nchain
+      (0..nbuckets+nchain -1).each do |b|
+        hashtab[2+b]= 0
+      end
+      table.each {|name,idx|
+        i = 2+(elf_hash(name) % nbuckets) #initial bucket
+        while(hashtab[i] != 0)
+          i = 2+nbuckets+hashtab[i] # Collision record for that entry
+        end
+        hashtab[i]=idx
+      }
+      sect = OutputSection.new(".hash",SHT::SHT_HASH,SHF::SHF_ALLOC,nil, hashtab.num_bytes, ".dynsym", 0,8,@file.bits/8, hashtab.to_binary_s)
+      @layout.add sect
+      @dynamic << @factory.dyn.new(tag: DT::DT_HASH, val: sect.vaddr)
+     # pp hashtab.snapshot
     end
     def dynsym(dynstrtab)
       symtab = BinData::Array.new(:type => @factory.sym)
@@ -843,12 +887,13 @@ end
         end
         s.val = (sym.section.andand.addr || 0) + sym.sectoffset
         s.siz = sym.size
-        @dynsym[sym] = idx
+        @dynsym[sym.name] = idx
         symtab.push s
       end
       last_local_idx = syms.to_enum.with_index.select{|v,i| v.bind == STB::STB_LOCAL}.andand.last.andand.last || -1
       dynsym = OutputSection.new(".dynsym",SHT::SHT_DYNSYM, SHF::SHF_ALLOC, nil,symtab.num_bytes,".dynstr", last_local_idx+1,1,@factory.sym.new.num_bytes, symtab.to_binary_s)
       @layout.add dynsym
+      hashtab(@dynsym)
       @dynamic << @factory.dyn.new(tag: DT::DT_SYMTAB,val: dynsym.vaddr)
       @dynamic << @factory.dyn.new(tag: DT::DT_SYMENT,val: @factory.sym.new.num_bytes)
       
@@ -892,7 +937,7 @@ end
         relocations.each {|rel|
           entry = @factory.rela.new
           entry.off = rel.section.addr + rel.offset
-          entry.sym = @dynsym[rel.symbol]  #TODO: Find constant for
+          entry.sym = @dynsym[rel.symbol.name]  #TODO: Find constant for
           #SHN undef
           entry.type = rel.type
           entry.addend = rel.addend
@@ -909,7 +954,7 @@ end
       rel_by_section = @file.relocations.select(&:is_dynamic).group_by(&:section)
       if(rel_by_section[@file.dynamic.pltgot]) 
         relabuf=rela_buffer(rel_by_section[@file.dynamic.pltgot])
-        relaplt = OutputSection.new(".rela.plt", SHT::SHT_RELA, SHF::SHF_ALLOC, nil, relabuf.num_bytes,".dynsym",@file.dynamic.pltgot.name,relaentsize, relaentsize, relabuf.to_binary_s)
+        relaplt = OutputSection.new(".rela.plt", SHT::SHT_RELA, SHF::SHF_ALLOC, nil, relabuf.num_bytes,".dynsym",@file.dynamic.pltgot.name,32, relaentsize, relabuf.to_binary_s)
         @layout.add relaplt
         @dynamic << @factory.dyn.new(tag: DT::DT_PLTRELSZ, val: relabuf.num_bytes)
         @dynamic << @factory.dyn.new(tag: DT::DT_PLTREL, val: DT::DT_RELA)
@@ -918,7 +963,7 @@ end
       end
       #All other relocations go into .rela.dyn
       relabuf = rela_buffer(rel_by_section.values.flatten)
-      reladyn = OutputSection.new(".rela.dyn", SHT::SHT_RELA, SHF::SHF_ALLOC,nil, relabuf.num_bytes,".dynsym",0, relaentsize, relaentsize, relabuf.to_binary_s)
+      reladyn = OutputSection.new(".rela.dyn", SHT::SHT_RELA, SHF::SHF_ALLOC,nil, relabuf.num_bytes,".dynsym",0,32, relaentsize, relabuf.to_binary_s)
       @layout.add reladyn
       @dynamic << @factory.dyn.new(tag: DT::DT_RELA, val: reladyn.vaddr)
       @dynamic << @factory.dyn.new(tag: DT::DT_RELASZ, val: reladyn.siz)     
@@ -951,7 +996,7 @@ end
       hdr.flags = @file.flags
       
       @layout.write_sections(@buf,hdr)
-
+     
       @buf.seek 0 
       hdr.write @buf
     end
@@ -971,11 +1016,12 @@ end
   end
 end
 end
-
-$parse = Elf::Parser.from_file "/bin/ls"
+#$parse = Elf::Parser.from_file "/home/julian/devel/hello"
+$parse = Elf::Parser.from_file (ARGV[0] || "/bin/ls")
 Elf::Writer::Writer.to_file("/tmp/tst",$parse)
 `chmod +x /tmp/tst`
 #binding.pry
+
 #pp parse # .instance_variables
 ##TODO: Do enums as custom records.
 
