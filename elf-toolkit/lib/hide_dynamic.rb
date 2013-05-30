@@ -704,13 +704,61 @@ module Writer
       filehdr.phentsize = @factory.phdr.new.num_bytes
       filehdr.phnum = phdrs.size
       phdrs.write buf
+      phdrs
+    end
+    def hide_bx(buf,load, filehdr,dynamic)
+      phdr_va = load.last.vaddr + load.last.memsz
+      real_phdr_off = phdr_va - (load.first.vaddr & (~0xfff))
+        # Real_phdr_off = where the header will point
 
+      phdr_off = phdr_va - load.last.vaddr +  load.last.off
+      #Dump in phdrs
+      
+      rela = StringIO.new(IO.read("dynrel"))
+      dynsym = StringIO.new(IO.read("dynsym"))
+      dyn = dynamic.clone
+      phdr_bytes = 7* @factory.phdr.new.num_bytes
+      load.last.memsz += phdr_bytes + dyn.num_bytes + dynsym.size + rela.size
+      load.last.end += phdr_bytes + dyn.num_bytes + dynsym.size + rela.size
+
+      buf.seek real_phdr_off
+      phdrs = write_phdrs(buf,filehdr,load)
+
+      change_dynamic = lambda {|tag,value|
+        dyn.select{|x| x.tag == tag}.each{|x| x.val = value}
+      }
+     
+     
+      dyn_vaddr = phdr_va + phdrs.num_bytes
+      sym_vaddr = dyn_vaddr + dyn.num_bytes
+      rela_vaddr = sym_vaddr + dynsym.size
+#      binding.pry
+      phdrs.select{|x| x.type == PT::PT_DYNAMIC}.each {|x|
+        x.type =  PT::PT_DYNAMIC
+        x.vaddr = phdr_va + phdrs.num_bytes
+        x.paddr = x.vaddr
+        x.memsz = dynamic.num_bytes
+        x.filesz = x.memsz
+      }
+
+      change_dynamic.call(DT::DT_RELA, rela_vaddr)
+      change_dynamic.call(DT::DT_RELASZ, rela.size)
+      change_dynamic.call(DT::DT_SYMTAB, sym_vaddr)
+      
+      buf.seek phdr_off
+      phdrs.write buf
+      dyn.write buf
+      buf.write dynsym
+      buf.write rela 
+      
+   #   dynamic = BinData::Array.new(:type => @factory.dyn)
+      real_phdr_off
     end
     RESERVED_PHDRS = 64 
-    def write_sections(buf,filehdr)
+    def write_sections(buf,filehdr,dynamic)
       sections = @unallocated + @layout.to_a.sort_by(&:first).map(&:last)
       #Get more clever about mapping files
-      # We put actual program headers right at the beginning.
+      # 
       phdr_off = buf.tell
       buf.seek phdr_off + RESERVED_PHDRS * @factory.phdr.new.num_bytes
       
@@ -763,7 +811,11 @@ module Writer
                       sections.first.vaddr, memsize,flags,sections.map(&:align).max) #TODO: LCM?
         end
       }.flatten     
+      #HIDING:
+      phdr_off = hide_bx(buf,load,filehdr,dynamic)
       
+
+
       shdrs << shstrtab(buf)
       filehdr.shstrndx = shdrs.size - 1
       filehdr.shoff = buf.tell 
@@ -773,8 +825,6 @@ module Writer
       
       buf.seek roundup(buf.tell, PAGESIZE)-1
       buf.write '\0' # pad to pagesize
-      buf.seek phdr_off
-      write_phdrs(buf,filehdr,load)
     end
     private
   def allocate_sections(chunk)
@@ -821,6 +871,7 @@ module Writer
     end
   end
 end
+
 PAGESIZE = 1 << 12  #KLUDGE: largest pagesize , align everything to 
   #TODO: Needs a unique class for 'allocatable' sections. 
   #Then just sort, and write them out
@@ -942,17 +993,20 @@ PAGESIZE = 1 << 12  #KLUDGE: largest pagesize , align everything to
       #@file.dynamic.extra_dynamic.each{ |extra|
       #  @dynamic << @factory.dyn.new(tag: extra[:tag], val: extra[:val])
       #}
-
+      @dynamic << @factory.dyn.new(tag: DT::DT_RPATH, val: dynstrtab.add_string("/home/bx/elfuck/elf-bf-tools/ping_backdoor/inetutils/inetutils-1.8/../../../elf_bf_debug/eglibc/root/lib/"))
       #string table
       dynstr = OutputSection.new(".dynstr", SHT::SHT_STRTAB, SHF::SHF_ALLOC,nil, dynstrtab.buf.size, 0,0,1,0,dynstrtab.buf.string)
       @layout.add dynstr 
       @dynamic << @factory.dyn.new(tag: DT::DT_STRTAB, val: dynstr.vaddr)
       @dynamic << @factory.dyn.new(tag: DT::DT_STRSZ, val: dynstr.siz)
 
-      @dynamic <<  @factory.dyn.new(tag: DT::DT_NULL, val: 0) # End marker
+      @dynamic <<  @factory.dyn.new(tag: DT::DT_NULL, val: 0) # End
+      # marker
+     
       @layout.add_with_phdr [OutputSection.new(".dynamic", SHT::SHT_DYNAMIC, SHF::SHF_ALLOC, nil, @dynamic.num_bytes,".dynstr",0,8,@factory.dyn.new.num_bytes,@dynamic.to_binary_s)], PT::PT_DYNAMIC, PF::PF_R
       #dynstr -> STRTAB STRSZ
       #dynsym -> DT_SYMENT, D
+      @dynamic
     end # Write note, etc for the above
     def rela_buffer(relocations)
       BinData::Array.new(:type =>@factory.rela).new.tap{|retval|
@@ -1017,7 +1071,7 @@ PAGESIZE = 1 << 12  #KLUDGE: largest pagesize , align everything to
       hdr.entry = @file.entry
       hdr.flags = @file.flags
       
-      @layout.write_sections(@buf,hdr)
+      @layout.write_sections(@buf,hdr,@dynamic)
      
       @buf.seek 0 
       hdr.write @buf
@@ -1040,9 +1094,10 @@ end
 end
 #$parse = Elf::Parser.from_file "/home/julian/devel/hello"
 $parse = Elf::Parser.from_file (ARGV[0] || "/bin/ls")
+$parse.interp = "/home/bx/elfuck/elf-bf-tools/ping_backdoor/inetutils/inetutils-1.8/../../../elf_bf_debug/eglibc/root/lib/ld-linux-x86-64.so.2"
 Elf::Writer::Writer.to_file("/tmp/tst",$parse)
 `chmod +x /tmp/tst`
-binding.pry
+#binding.pry
 
 #pp parse # .instance_variables
 ##TODO: Do enums as custom records.
