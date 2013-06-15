@@ -93,5 +93,4 @@ module Elf
     attr_accessor :progbits, :nobits, :dynamic, :symbols, :relocations
     attr_accessor :notes, :bits, :endian, :interp, :extra_phdrs
   end
-
 end

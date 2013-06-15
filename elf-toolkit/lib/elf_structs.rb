@@ -169,6 +169,10 @@ module ElfStructs
     xword :siz
     sym_common
   end
+
+  def stringtable
+    array :strings, :type => :stringz, :initial_length=> 0 
+  end
   ELF_OBJECTS =  [:sym, :rela, :rel, :dyn, :phdr, :shdr, :hdr, :note]
   Split = {
     phdr: {
