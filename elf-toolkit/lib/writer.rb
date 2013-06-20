@@ -140,7 +140,7 @@ module Elf
     end
     RESERVED_PHDRS = 64 
     def write_sections(buf,filehdr)
-      sections = @unallocated + @layout.to_a.sort_by(&:first).map(&:last)
+      sections = @layout.to_a.sort_by(&:first).map(&:last) + @unallocated
       #Get more clever about mapping files
       # We put actual program headers right at the beginning.
       phdr_off = buf.tell
