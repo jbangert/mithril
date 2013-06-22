@@ -114,10 +114,10 @@ module Elf
     
     def parse_verneed(shdr)
       @versions = {}
-      @data.seek shdr.off
       @unparsed_sections.delete shdr.index
       strtab = safe_strtab(shdr.link)
-      data = @data.read(shdr.siz)
+      @data.seek shdr.off
+      data = StringIO.new(@data.read(shdr.siz.to_i))
       # This is the weird, screwed up 'array' implementation that
       # they use
       verneedoff = 0
@@ -131,16 +131,23 @@ module Elf
         verneed.cnt.times {
           data.seek vernauxoff
           
-          vernaux = @factory.verneed.read(data)            
+          vernaux = @factory.vernaux.read(data)            
           versionname = strtab[vernaux.name]
           flags = vernaux.flags.to_i
           version = vernaux.other.to_i
           
-          @versions[version] = GnuVersion.new(file: file, version: versionname, flags: flags)
-          vernauxoff += vernaux.next
+          @versions[version] = GnuVersion.new( file,  versionname,  flags)
+          vernauxoff += vernaux.nextoff
         }
-        vernauxoff += verneed.next
+        vernauxoff += verneed.nextoff
       } 
+    end
+    def parse_versym(shdr,dynsym)
+      @data.seek shdr.off
+      data = StringIO.new(@data.read(shdr.siz.to_i))
+      BinData::Array.new(type: @factory.versym, initial_length: shdr.siz / @factory.versym.new.num_bytes).read(data).to_enum.with_index  {|versym,index|
+        dynsym[index].gnu_version = @versions[versym.veridx]
+      }
     end
     DYNAMIC_FLAGS =            {
       DT::DT_TEXTREL=>:@textrel,
@@ -485,7 +492,11 @@ module Elf
       
 
       #TODO: gnu extensions, in particular gnu_hash
-
+      unique_section(@sect_types,ElfFlags::SectionType::SHT_GNU_VERNEED).andand{|verneed| parse_verneed verneed}
+      unique_section(@sect_types,ElfFlags::SectionType::SHT_GNU_VERSYM).andand{|versym|
+        expect_value "Need a dynsym when we have versym", @dynsym.nil?, false
+        parse_versym versym,@dynsym
+      }
       @file.notes = Hash[(@sect_types[SHT::SHT_NOTE] || []).map{|note| parse_note note}]
       #TODO: expect non-nil dynamic for some types
       @file.relocations = @relocation_sections.values.flatten

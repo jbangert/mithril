@@ -170,38 +170,39 @@ module ElfStructs
     sym_common
   end
   def versym
-    half :symidx
+    half :veridx
   end
   def verdaux
     half :name
-    half :next
+    half :nextoff
   end
   def verdef
     half :version
     half :flags
     half :ndx
     half :cnt
-    half :hash
+    half :hsh
     half :aux
-    half :next
+    half :nextoff
   end
   def verneed
     half :version
     half :cnt
-    half :file
-    half :aux
-    half :next
+    word :file
+    word :aux
+    word :nextoff
   end
   def vernaux
-    word :hash
-    word :flags
-    word :other
-    word :name 
+    word :hsh
+    half :flags
+    half :other
+    word :name
+    word :nextoff
   end
   def stringtable
     array :strings, :type => :stringz, :initial_length=> 0 
   end
-  ELF_OBJECTS =  [:sym, :rela, :rel, :dyn, :phdr, :shdr, :hdr, :note]
+  ELF_OBJECTS =  [:sym, :rela, :rel, :dyn, :phdr, :shdr, :hdr, :note, :vernaux, :verneed, :verdef, :verdaux, :versym]
   Split = {
     phdr: {
       32 => :phdr32,
