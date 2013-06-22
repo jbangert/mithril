@@ -1,6 +1,6 @@
 require_relative 'elf'
 
-$UNSAFE_PARSER = ! ENV['HOWDY_NEIGHBOURS_BX'].nil? # shoutout to one
+$UNSAFE_PARSER = ! ENV['HOWDY_NEIGHBOUR_BX'].nil? # shoutout to one
 # of the best ELF hackers on the block. 
 
 def expect_value(desc,is,should)
@@ -27,7 +27,7 @@ module Elf
       def [](offset)
         return ""
       end
-    end 
+    end
     class Parser
       attr_reader :file
       def initialize(string)
@@ -111,6 +111,7 @@ module Elf
         expect_value "PROGBITS link",shdr.link,0
         ProgBits.new(@shstrtab[shdr.name], shdr.snapshot,  @data.read(shdr.siz))
       end
+     
       DYNAMIC_FLAGS =            {
         DT::DT_TEXTREL=>:@textrel,
         DT::DT_BIND_NOW => :@bind_now,
@@ -429,7 +430,6 @@ module Elf
         parse_phdrs()
         @symtab = unique_section(@sect_types, ElfFlags::SectionType::SHT_SYMTAB).andand {|symtab| parse_symtable symtab, safe_strtab(symtab.link) }
         @dynsym = unique_section(@sect_types, ElfFlags::SectionType::SHT_DYNSYM).andand {|symtab| parse_symtable symtab, safe_strtab(symtab.link) }
-        
         @file.symbols = Hash.new.tap{|h| (@symtab || []).each{|sym| h[sym.name] = sym}}
         (@dynsym|| []).each {|sym|
           sym.is_dynamic = true
@@ -452,6 +452,9 @@ module Elf
         @file.dynamic = unique_section(@sect_types, ElfFlags::SectionType::SHT_DYNAMIC).andand{|dynamic| parse_dynamic dynamic}
         
         
+        unique_section(@sect_types,ElfFlags::SectionType::SHT_GNU_VERSYM).andand{|versym| parse_versym versym,@dynsym}
+        binding.pry
+        @verneed = unique_section(@sect_types,ElfFlags::SectionType::SHT_GNU_VERNEED).andand{|verneed| parse_verneed}
 
         #TODO: gnu extensions, in particular gnu_hash
 

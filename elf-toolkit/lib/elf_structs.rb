@@ -169,7 +169,35 @@ module ElfStructs
     xword :siz
     sym_common
   end
-
+  def versym
+    half :symidx
+  end
+  def verdaux
+    half :name
+    half :next
+  end
+  def verdef
+    half :version
+    half :flags
+    half :ndx
+    half :cnt
+    half :hash
+    half :aux
+    half :next
+  end
+  def verneed
+    half :version
+    half :cnt
+    half :file
+    half :aux
+    half :next
+  end
+  def vernaux
+    word :hash
+    word :flags
+    word :other
+    word :name 
+  end
   def stringtable
     array :strings, :type => :stringz, :initial_length=> 0 
   end

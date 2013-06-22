@@ -111,6 +111,37 @@ module Elf
       expect_value "PROGBITS link",shdr.link,0
       ProgBits.new(@shstrtab[shdr.name], shdr.snapshot,  @data.read(shdr.siz))
     end
+    
+    def parse_verneed(shdr)
+      @versions = {}
+      @data.seek shdr.off
+      @unparsed_sections.delete shdr.index
+      strtab = safe_strtab(shdr.link)
+      data = @data.read(shdr.siz)
+      # This is the weird, screwed up 'array' implementation that
+      # they use
+      verneedoff = 0
+      shdr.info.to_i.times{ #SHDR.info has number of entries
+        data.seek verneedoff
+        verneed = @factory.verneed.read(data)
+        expect_value "VERNEED version", verneed.version, 1
+        file = strtab[verneed.file]
+        vernauxoff = verneedoff + verneed.aux
+        
+        verneed.cnt.times {
+          data.seek vernauxoff
+          
+          vernaux = @factory.verneed.read(data)            
+          versionname = strtab[vernaux.name]
+          flags = vernaux.flags.to_i
+          version = vernaux.other.to_i
+          
+          @versions[version] = GnuVersion.new(file: file, version: versionname, flags: flags)
+          vernauxoff += vernaux.next
+        }
+        vernauxoff += verneed.next
+      } 
+    end
     DYNAMIC_FLAGS =            {
       DT::DT_TEXTREL=>:@textrel,
       DT::DT_BIND_NOW => :@bind_now,

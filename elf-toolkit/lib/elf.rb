@@ -74,8 +74,10 @@ module Elf
       @size
     end
   end
+  GnuVersion = Struct.new(:file,:version,:flags)
   class Symbol #All values here are section offsets
     attr_accessor :name, :section,:type, :sectoffset, :bind, :size,:is_dynamic
+    attr_accessor :gnu_version, :gnu_file
     def initialize(name,section,type,sectoffset, bind,size)
       @name,@section, @type, @sectoffset, @bind, @size = name.to_s,section,type,sectoffset, bind,size
       @is_dynamic = false
