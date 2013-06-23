@@ -140,14 +140,14 @@ module Elf
     end
     RESERVED_PHDRS = 64 
     def write_sections(buf,filehdr)
-      sections = @layout.to_a.sort_by(&:first).map(&:last) + @unallocated
+      sections = [OutputSection.new("", SHT::SHT_NULL, 0,0,0,0,0,0,0,"") ] +@layout.to_a.sort_by(&:first).map(&:last) + @unallocated
       #Get more clever about mapping files
       # We put actual program headers right at the beginning.
       phdr_off = buf.tell
       buf.seek phdr_off + RESERVED_PHDRS * @factory.phdr.new.num_bytes
       
       shdrs = BinData::Array.new(:type=>@factory.shdr).push *sections.map{ |s|
-        expect_value "aligned to vaddr", 0,s.vaddr % s.align
+        expect_value "aligned to vaddr", 0,s.vaddr % s.align if s.align != 0
         #expect_value "aligned to pagesize",0, PAGESIZE % s.align 
         if s.flags & SHF::SHF_ALLOC != 0
           off = align_mod(buf.tell,s.vaddr, PAGESIZE)        
@@ -326,9 +326,69 @@ module Elf
       @dynamic << @factory.dyn.new(tag: DT::DT_HASH, val: sect.vaddr)
       # pp hashtab.snapshot
     end
+    def verneed(dynsym,dynstrtab) #TODO: Use parser combinator
+      @versions = {}
+      buffer = StringIO.new()
+      versions_by_file =  dynsym.map(&:gnu_version).uniq.select{|x| !x.nil? }.group_by(&:file)
+      i = 0
+      versions_by_file.each {|file, versions|
+        i+=1
+        #Create VERNEED for this file
+        verneed = @factory.verneed.new
+        verneed.version = 1
+        verneed.cnt = versions.size
+        verneed.file = dynstrtab.add_string(file)
+        verneed.aux = verneed.num_bytes
+        vernauxs = BinData::Array.new(type: @factory.vernaux)
+        versions.each {|ver|
+          vernauxs.push @factory.vernaux.new.tap {|x|
+            x.hsh = elf_hash(ver.version)
+            x.flags = ver.flags
+            x.other = @versions.size + 2
+            x.name = dynstrtab.add_string(ver.version)
+            x.nextoff = if vernauxs.size == versions.size - 1
+                          0
+                        else
+                          x.num_bytes
+                        end
+            @versions[ver] = x.other.to_i
+          }          
+        }
+        if (versions_by_file.size == i)
+          verneed.nextoff = 0
+        else
+          verneed.nextoff = verneed.num_bytes + vernauxs.num_bytes # TODO: 0 for last
+        end
+        verneed.write(buffer)
+        vernauxs.write(buffer)
+      }
+      sect = OutputSection.new(".gnu.version_r", SHT::SHT_GNU_VERNEED,SHF::SHF_ALLOC,nil,buffer.size,".dynstr",versions_by_file.size,8,0,buffer.string)
+      @layout.add sect
+      @dynamic << @factory.dyn.new(tag: DT::DT_VERNEED, val: sect.vaddr)
+      @dynamic << @factory.dyn.new(tag: DT::DT_VERNEEDNUM, val: versions_by_file.size)
+      @versions
+    end
+    def versym(versions,symbols)
+      data = BinData::Array.new(type: @factory.versym)
+      symbols.each{|sym|
+        veridx = case sym.gnu_version
+                 when :local
+                   0
+                 when :global
+                   1
+                 else
+                   versions[sym.gnu_version]
+                 end
+        data.push @factory.versym.new(veridx: veridx)        
+      }
+      sect = OutputSection.new(".gnu.version",SHT::SHT_GNU_VERSYM, SHF::SHF_ALLOC, nil, data.num_bytes, ".dynsym",0, 8,2, data.to_binary_s)
+      @layout.add sect
+      @dynamic << @factory.dyn.new(tag: DT::DT_VERSYM, val: sect.vaddr)
+    end
     def dynsym(dynstrtab)
       symtab = BinData::Array.new(:type => @factory.sym)
       syms = @file.symbols.values.select(&:is_dynamic)
+      versions = verneed(syms, dynstrtab)
       @dynsym = {}
       syms.to_enum.with_index.each do |sym,idx|
         s = @factory.sym.new
@@ -336,6 +396,8 @@ module Elf
         s.type = sym.type
         s.binding = sym.bind
         s.shndx = 0
+
+      
         unless sym.section.nil?
           expect_value "valid symbol offset",  sym.sectoffset < sym.section.size,true
         end
@@ -346,6 +408,7 @@ module Elf
       end
       last_local_idx = syms.to_enum.with_index.select{|v,i| v.bind == STB::STB_LOCAL}.andand.last.andand.last || -1
       dynsym = OutputSection.new(".dynsym",SHT::SHT_DYNSYM, SHF::SHF_ALLOC, nil,symtab.num_bytes,".dynstr", last_local_idx+1,1,@factory.sym.new.num_bytes, symtab.to_binary_s)
+      versym(versions,syms)
       @layout.add dynsym
       hashtab(@dynsym)
       @dynamic << @factory.dyn.new(tag: DT::DT_SYMTAB,val: dynsym.vaddr)

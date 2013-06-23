@@ -146,7 +146,14 @@ module Elf
       @data.seek shdr.off
       data = StringIO.new(@data.read(shdr.siz.to_i))
       BinData::Array.new(type: @factory.versym, initial_length: shdr.siz / @factory.versym.new.num_bytes).read(data).to_enum.with_index  {|versym,index|
-        dynsym[index].gnu_version = @versions[versym.veridx]
+         dynsym[index].gnu_version =case versym.veridx
+                                    when 0
+                                      :local
+                                    when 1
+                                      :global
+                                    else
+                                      @versions[versym.veridx]          
+                                    end
       }
     end
     DYNAMIC_FLAGS =            {
