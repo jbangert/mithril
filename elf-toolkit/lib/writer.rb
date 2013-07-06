@@ -112,7 +112,7 @@ module Elf
       }
       load.each {|l|
         phdrs.push @factory.phdr.new.tap {|x|
-          x.align = l.align
+          x.align = [PAGESIZE,l.align].max
           x.vaddr = l.vaddr
           x.paddr = x.vaddr
           x.type = PT::PT_LOAD
