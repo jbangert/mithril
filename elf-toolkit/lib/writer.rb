@@ -138,7 +138,7 @@ module Elf
       phdrs.write buf
 
     end
-    RESERVED_PHDRS = 64 
+    RESERVED_PHDRS = 16
     def write_sections(buf,filehdr)
       sections = [OutputSection.new("", SHT::SHT_NULL, 0,0,0,0,0,0,0,"") ] +@layout.to_a.sort_by(&:first).map(&:last) + @unallocated
       #Get more clever about mapping files
@@ -329,7 +329,7 @@ module Elf
     def verneed(dynsym,dynstrtab) #TODO: Use parser combinator
       @versions = {}
       buffer = StringIO.new()
-      versions_by_file =  dynsym.map(&:gnu_version).uniq.select{|x| !x.nil? }.group_by(&:file)
+      versions_by_file =  dynsym.map(&:gnu_version).uniq.select{|x| x.is_a? GnuVersion}.group_by(&:file)
       i = 0
       versions_by_file.each {|file, versions|
         i+=1
@@ -397,9 +397,8 @@ module Elf
         s.binding = sym.bind
         s.shndx = 0
 
-      
         unless sym.section.nil?
-          expect_value "valid symbol offset",  sym.sectoffset < sym.section.size,true
+          expect_value "valid symbol offset",  sym.sectoffset <= sym.section.size,true #Symbol can point to end of section
         end
         s.val = (sym.section.andand.addr || 0) + sym.sectoffset
         s.siz = sym.size
