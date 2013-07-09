@@ -149,7 +149,7 @@ module Elf
     def write_sections(buf,filehdr)
       first_shdr = OutputSection.new("", SHT::SHT_NULL, 0,0,0,0,0,0,0,"")
       first_shdr.index = 0
-      sections = ([first_shdr] +@layout.to_a.sort_by(&:first).map(&:last) + @unallocated).sort_by(&:index)
+      sections = ([first_shdr] +@layout.to_a.sort_by(&:first).map(&:last) + @unallocated)
       
       #Get more clever about mapping files
       # We put actual program headers right at the beginning.
@@ -158,7 +158,7 @@ module Elf
       idx = 0
       shdrs = BinData::Array.new(:type=>@factory.shdr).push *sections.map{ |s|
         expect_value "aligned to vaddr", 0,s.vaddr % s.align if s.align != 0
-        expect_value "idx", idx,s.index
+        #expect_value "idx", idx,s.index
         idx +=1 
         #expect_value "aligned to pagesize",0, PAGESIZE % s.align 
         if s.flags & SHF::SHF_ALLOC != 0
