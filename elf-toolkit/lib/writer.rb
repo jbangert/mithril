@@ -25,10 +25,12 @@ module Elf
   end
   class OutputSection 
     attr_accessor :name, :type,:flags,:vaddr,:siz,:link,:info, :align, :entsize, :data, :shdr, :off
+    attr_accessor :index
     # TODO: Use params array
     def initialize(name,type,flags,vaddr,siz,link,info,align,entsize,data) #link and info are strings, offset is done by output stage
       @name,@type,@flags, @vaddr, @siz, @link, @info, @align, @entsize, @data= name,type,flags,vaddr,siz,link,info,align,entsize, data
       @off = nil
+      @index = nil
     end
     def end
       @vaddr + @siz
@@ -44,12 +46,17 @@ module Elf
       @factory = factory
       @phdrs = [] #BinData::Array.new(:type => @factory.phdr)
       @unallocated =[]
+      @current_idx = 1
     end
     def add(*sections)       #Ordering as follows: Fixed
       #(non-nil vaddrs) go where they have to go
       # Flexible sections are added to lowest hole after section of
       # the same type
       return if sections.empty?
+      sections.each{|shdr|
+        shdr.index = @current_idx
+        @current_idx += 1
+      }
       flags = sections.first.flags
       @layout_by_flags[flags] ||= RBTree.new()
       if sections.length > 1 || sections.first.vaddr.nil?
@@ -140,14 +147,19 @@ module Elf
     end
     RESERVED_PHDRS = 16
     def write_sections(buf,filehdr)
-      sections = [OutputSection.new("", SHT::SHT_NULL, 0,0,0,0,0,0,0,"") ] +@layout.to_a.sort_by(&:first).map(&:last) + @unallocated
+      first_shdr = OutputSection.new("", SHT::SHT_NULL, 0,0,0,0,0,0,0,"")
+      first_shdr.index = 0
+      sections = ([first_shdr] +@layout.to_a.sort_by(&:first).map(&:last) + @unallocated).sort_by(&:index)
+      
       #Get more clever about mapping files
       # We put actual program headers right at the beginning.
       phdr_off = buf.tell
       buf.seek phdr_off + RESERVED_PHDRS * @factory.phdr.new.num_bytes
-      
+      idx = 0
       shdrs = BinData::Array.new(:type=>@factory.shdr).push *sections.map{ |s|
         expect_value "aligned to vaddr", 0,s.vaddr % s.align if s.align != 0
+        expect_value "idx", idx,s.index
+        idx +=1 
         #expect_value "aligned to pagesize",0, PAGESIZE % s.align 
         if s.flags & SHF::SHF_ALLOC != 0
           off = align_mod(buf.tell,s.vaddr, PAGESIZE)        
@@ -249,7 +261,7 @@ module Elf
         true
       else
         ( (tree.upper_bound(from).andand.last.andand.end || -1) <= from ) &&
-          ( (tree.lower_bound(to).andand.last.andand.vaddr || +1.0/0.0) > to)
+          ( (tree.lower_bound(to).andand.last.andand.vaddr || +1.0/0.0) >= to)
       end
     end
   end
@@ -395,8 +407,7 @@ module Elf
         s.name = dynstrtab.add_string(sym.name)
         s.type = sym.type
         s.binding = sym.bind
-        s.shndx = 0
-
+        s.shndx = 0# 0xabcd
         unless sym.section.nil?
           expect_value "valid symbol offset",  sym.sectoffset <= sym.section.size,true #Symbol can point to end of section
         end
