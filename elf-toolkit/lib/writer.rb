@@ -2,7 +2,20 @@ require_relative 'elf'
 module Elf
   module Writer
 
-  class StringTable #Replace with compacting string table
+    def self.elf_hash(value)      
+      h=0 
+      g=0
+      value.chars.map(&:ord).each {|char|
+        h = ((h << 4) + (char % 256) )
+        g = h & 0xf0000000
+        if g!=0
+          h = h ^ (g>> 24) # This simulates overflow; elf spec is clever
+        end
+        h &= ~g
+      }
+      h
+    end
+    class StringTable #Replace with compacting string table
     attr_reader :buf
     def initialize 
       @buf = StringIO.new("\0")
@@ -306,33 +319,28 @@ module Elf
         @layout.add_with_phdr [OutputSection.new(".interp",SHT::SHT_PROGBITS, SHF::SHF_ALLOC, nil, interp.num_bytes,0,0,1,0,interp.to_binary_s)], PT::PT_INTERP, PF::PF_R
       end
     end
-    def elf_hash(value)
-      h=0 
-      g=0
-      value.chars.map(&:ord).each {|char|
-        h = (h << 4) + char
-        g = h & 0xf0000000
-        h = h ^ (g>> 24)
-        h &= ~g
-      }
-      h
-    end
+    UINT64_MOD = 2**64
     def hashtab(table)
-      hashtab = BinData::Array.new(:type => "uint#{@file.bits}#{@file.endian == :big ? 'be' : 'le'}".to_sym)
-      nbuckets = 64
-      nchain  =  table.size
-      hashtab[0] = nbuckets
-      hashtab[1] = nchain
-      (0..nbuckets+nchain -1).each do |b|
-        hashtab[2+b]= 0
-      end
+      hashtab = BinData::Array.new(:type => "uint32#{@file.endian == :big ? 'be' : 'le'}".to_sym)
+      nbuckets = 5
+      nchain = table.size
+      buckets = Array.new(nbuckets,0)
+      chain = Array.new(nchain,0)
+
       table.each {|name,idx|
-        i = 2+(elf_hash(name) % nbuckets) #initial bucket
-        while(hashtab[i] != 0)
-          i = 2+nbuckets+hashtab[i] # Collision record for that entry
-        end
-        hashtab[i]=idx
+        i = Elf::Writer::elf_hash(name) % nbuckets
+        if(buckets[i] == 0)
+          buckets[i] = idx
+        else
+          i = buckets[i]
+          while(chain[i] != 0)
+            i= chain[i]
+          end
+          chain[i] = idx
+        end        
       }
+      hashtab.assign [nbuckets,nchain] + buckets + chain
+      pp hashtab
       sect = OutputSection.new(".hash",SHT::SHT_HASH,SHF::SHF_ALLOC,nil, hashtab.num_bytes, ".dynsym", 0,8,@file.bits/8, hashtab.to_binary_s)
       @layout.add sect
       @dynamic << @factory.dyn.new(tag: DT::DT_HASH, val: sect.vaddr)
@@ -354,7 +362,7 @@ module Elf
         vernauxs = BinData::Array.new(type: @factory.vernaux)
         versions.each {|ver|
           vernauxs.push @factory.vernaux.new.tap {|x|
-            x.hsh = elf_hash(ver.version)
+            x.hsh = Elf::Writer::elf_hash(ver.version)
             x.flags = ver.flags
             x.other = @versions.size + 2
             x.name = dynstrtab.add_string(ver.version)
@@ -407,7 +415,7 @@ module Elf
         s.name = dynstrtab.add_string(sym.name)
         s.type = sym.type
         s.binding = sym.bind
-        s.shndx = 0# 0xabcd
+        s.shndx = 0
         unless sym.section.nil?
           expect_value "valid symbol offset",  sym.sectoffset <= sym.section.size,true #Symbol can point to end of section
         end
