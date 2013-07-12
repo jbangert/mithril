@@ -207,6 +207,9 @@ module ElfFlags
     PT_LOPROC  =  0x70000000
     PT_HIPROC  =  0x7fffffff
     PT_GNU_STACK  =  0x6474e551
+    PT_ELFBAC = 42 # Nothing to see here ;) - ELFBAC, see Dartmouth
+    # college TR
+    
   end
   class PhdrFlags < Enum # PF_
     PF_X  =  0x1
@@ -301,6 +304,12 @@ module ElfFlags
     class SymbolName < Enum # STN_
       STN_UNDEF  =  0
     end
+    class ElfPData < Enum
+      ELFP_RW_READ = 1
+      ELFP_RW_WRITE = 2
+      ELFP_RW_EXEC = 4
+      ELFP_RW_SIZE = 8
+    end
     class Relocation < Enum # R_
       R_X86_64_NONE  =  0
       R_X86_64_64  =  1
@@ -326,7 +335,8 @@ module ElfFlags
       R_X86_64_DTPOFF32  =  21
       R_X86_64_GOTTPOFF  =  22
       R_X86_64_TPOFF32  =  23
-      R_X86_64_COUNT  =  24
+      R_X86_64_SIZE64  = 33
+      R_X86_64_COUNT  =  39
       R_ALPHA_NONE  =  0
       R_ALPHA_REFLONG  =  1
       R_ALPHA_REFQUAD  =  2

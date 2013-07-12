@@ -202,7 +202,47 @@ module ElfStructs
   def stringtable
     array :strings, :type => :stringz, :initial_length=> 0 
   end
-  ELF_OBJECTS =  [:sym, :rela, :rel, :dyn, :phdr, :shdr, :hdr, :note, :vernaux, :verneed, :verdef, :verdaux, :versym]
+  #ELFP redesign - in progress
+=begin
+  def elfp_chunk_desc # Each chunk of ELFbac metadata is also a section
+    uint32 :type
+    uint32 :offset
+    uint32 :size
+  end
+  def elfp_header
+    uint32 :sectioncount, value: lambda { sectionheaders.length }
+    array :sectionheaders, type: @@factory.elfp_chunk_desc, read_length: initia
+  end
+=end
+  #ELFP old
+  def elfp_header
+    uint32 :chunkcount, value: lambda {states.size + calls.size + data.size}
+    array :states, type: @factory.elfp_state
+    array :calls, type: @factory.elfp_call
+    array :data, type: @factory.elfp_data
+  end
+  def elfp_state
+    uint32 :chunkid , value: 1 
+    uint32 :id
+    uint32 :stackid, default_value: 0
+  end
+  def elfp_call
+    uint32 :chunktype, value: 2
+    uint32 :from
+    uint32 :to
+    uint64 :off
+    uint16 :parambytes
+    uint16 :returnbytes
+  end
+  def elfp_data
+    uint32 :chunktype, value: 3
+    uint64 :low
+    uint64 :high
+    uint32 :from
+    uint32 :to
+    uint32 :type
+  end
+  ELF_OBJECTS =  [:sym, :rela, :rel, :dyn, :phdr, :shdr, :hdr, :note, :vernaux, :verneed, :verdef, :verdaux, :versym, :elfp_state, :elfp_call, :elfp_data, :elfp_header]
   Split = {
     phdr: {
       32 => :phdr32,
@@ -268,11 +308,13 @@ class ElfStructFactory
   def initialize(endian,width)
     @endian = endian
     @width = width
+    factory = self
     ElfStructs::ELF_OBJECTS.each do |object|
       klass = Class.new BinData::Record do
         extend ElfStructs
         endian  endian
         bitness width
+        @factory =  factory
         if(ElfStructs::Split.include? object)
           self.send(ElfStructs::Split[object][width])
         else

@@ -478,7 +478,8 @@ module Elf
       @file.symbols = Hash.new.tap{|h| (@symtab || []).each{|sym| h[sym.name] = sym}}
       (@dynsym|| []).each {|sym|
         sym.is_dynamic = true
-        if @file.symbols.include? sym.name
+        if @file.symbols.include? sym.name #TODO: assert that symbols
+          #are the same!
           staticsym =  @file.symbols[sym.name]
           expect_value "Dynamic #{sym.name} value", sym.sectoffset, staticsym.sectoffset
           expect_value "Dynamic #{sym.name} value", sym.section, staticsym.section

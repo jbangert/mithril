@@ -26,17 +26,25 @@ module Elf
   end
   class ProgBits
     attr_accessor :data,:name, :addr, :flags, :align, :entsize
+    attr_accessor :phdr, :phdr_flags # Makes a PHDR for this section
     def initialize(name,shdr,data)
       @data = StringIO.new(data)
       @name = name
-      @addr = shdr.vaddr
-      @flags = shdr.flags
-      expect_value "PROGBITS link", shdr.link, 0
-      expect_value "PROGBITS info", shdr.info, 0
-      @align = shdr.addralign
-      @entsize = shdr.entsize # Expect 0 for now?
-      #      expect_value "PROGBITS entsize", @entsize,0
-      expect_value "Progbits must be full present", @data.size, shdr.siz
+      if shdr.nil?
+        @addr = nil
+        @flags = 0
+        @align = 0
+        @entsize = 0
+      else
+        @addr = shdr.vaddr
+        @flags = shdr.flags
+        expect_value "PROGBITS link", shdr.link, 0
+        expect_value "PROGBITS info", shdr.info, 0
+        @align = shdr.addralign
+        @entsize = shdr.entsize # Expect 0 for now?
+        #      expect_value "PROGBITS entsize", @entsize,0
+        expect_value "Progbits must be full present", @data.size, shdr.siz
+      end
     end
     def sect_type
       SHT::SHT_PROGBITS
@@ -46,7 +54,7 @@ module Elf
     end
   end
   class NoBits
-    attr_accessor :name, :addr, :flags, :align, :index
+    attr_accessor :name, :addr, :flags, :align, :index, :phdr, :phdr_flags
     def initialize(name,shdr)
       @name = name
       @addr = shdr.vaddr
@@ -94,5 +102,6 @@ module Elf
     attr_accessor :filetype, :machine, :entry, :flags, :version
     attr_accessor :progbits, :nobits, :dynamic, :symbols, :relocations
     attr_accessor :notes, :bits, :endian, :interp, :extra_phdrs
+
   end
 end
