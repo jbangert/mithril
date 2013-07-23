@@ -15,6 +15,13 @@ module Elf
       }
       h
     end
+    def self.gnu_hash(value)
+      h = 5381
+      value.chars.map(&:ord).each {|char|
+        h = (h*33 + char) & 0xffffffff
+      }
+      h
+    end
     class StringTable #Replace with compacting string table
       attr_reader :buf
       def initialize 
@@ -352,13 +359,12 @@ module Elf
         @dynamic << @factory.dyn.new(tag: DT::DT_HASH, val: sect.vaddr)
         # pp hashtab.snapshot
       end
-      def verneed(dynsym,dynstrtab) #TODO: Use parser combinator
+      def versions(dynsym,dynstrtab) #TODO: Use parser combinator
         @versions = {}
         buffer = StringIO.new()
-        versions_by_file =  dynsym.map(&:gnu_version).uniq.select{|x| x.is_a? GnuVersion}.group_by(&:file)
-        i = 0
-        versions_by_file.each {|file, versions|
-          i+=1
+        gnu_versions =  dynsym.map(&:gnu_version).uniq.select{|x|x.is_a? GnuVersion}
+        needed_versions = gnu_versions.select{|x| x.needed == true}.group_by(&:file)
+        needed_versions.each {|file, versions|
           #Create VERNEED for this file
           verneed = @factory.verneed.new
           verneed.version = 1
@@ -380,18 +386,59 @@ module Elf
               @versions[ver] = x.other.to_i
             }          
           }
-          if (versions_by_file.size == i)
-            verneed.nextoff = 0
+          if (needed_versions.size == @versions.size)
+            verneed.nextoff = 0 #  0 for last
           else
-            verneed.nextoff = verneed.num_bytes + vernauxs.num_bytes # TODO: 0 for last
+            verneed.nextoff = verneed.num_bytes + vernauxs.num_bytes
           end
           verneed.write(buffer)
           vernauxs.write(buffer)
         }
-        sect = OutputSection.new(".gnu.version_r", SHT::SHT_GNU_VERNEED,SHF::SHF_ALLOC,nil,buffer.size,".dynstr",versions_by_file.size,8,0,buffer.string)
-        @layout.add sect
-        @dynamic << @factory.dyn.new(tag: DT::DT_VERNEED, val: sect.vaddr)
-        @dynamic << @factory.dyn.new(tag: DT::DT_VERNEEDNUM, val: versions_by_file.size)
+        unless needed_versions.empty?
+          sect = OutputSection.new(".gnu.version_r", SHT::SHT_GNU_VERNEED,SHF::SHF_ALLOC,nil,buffer.size,".dynstr",needed_versions.size,8,0,buffer.string)
+          @layout.add sect
+          @dynamic << @factory.dyn.new(tag: DT::DT_VERNEED, val: sect.vaddr)
+          @dynamic << @factory.dyn.new(tag: DT::DT_VERNEEDNUM, val: needed_versions.size)
+        end
+
+        defined_versions = gnu_versions.select{|x| x.needed == false}
+         buffer = StringIO.new()
+        defined_versions.each {|ver|
+          expect_value "Defined version file name",ver.file, @file.dynamic.soname
+          verdef = @factory.verdef.new
+          verdef.version = 1
+          verdef.flags = ver.flags
+          verdef.ndx = @versions.size + 2
+          @versions[ver] = @versions.size + 2
+          verdef.hsh = Elf::Writer::gnu_hash(ver.name)
+          verdaux = BinData::Array.new(type: @factory.verdaux)
+          verdaux << @factory.verdaux.new.tap{|x|
+            x.name = dynstr.add(ver.file)
+            x.nextoff =  x.num_bytes
+          }
+          ver.parents.each {|parent|
+            aux = @factory.verdaux.new
+            aux.name = dynstr.add(parent.version)
+            aux.nextoff = aux.num_bytes
+            verdaux << aux
+          }
+          verdef.cnt = verdaux.size
+          verdef.aux = verdef.num_bytes
+          if(needed_versions.size + defined_versions.size == @versions.size)
+            verdef.nextoff = 0
+          else
+            verdef.nextoff = verdaux.num_bytes + verdef.num_bytes
+          end
+          verdef.write(buffer)
+          vernauxs.write(buffer)
+        }
+        unless defined_versions.empty?
+          sect = OutputSection.new(".gnu.version_d", SHT::SHT_GNU_VERDEF,SHF::SHF_ALLOC,nil,buffer.size,".dynstr",defined_versions.size,8,0,buffer.string)
+          @layout.add sect
+          @dynamic << @factory.dyn.new(tag: DT::DT_VERDEF, val: sect.vaddr)
+          @dynamic << @factory.dyn.new(tag: DT::DT_VERDEFNUM, val: defined_versions.size)
+        end
+        binding.pry
         @versions
       end
       def versym(versions,symbols)
@@ -413,8 +460,8 @@ module Elf
       end
       def dynsym(dynstrtab)
         symtab = BinData::Array.new(:type => @factory.sym)
-        syms = @file.symbols.values.select(&:is_dynamic)
-        versions = verneed(syms, dynstrtab)
+        syms = @file.symbols.select(&:is_dynamic)
+        versions = versions(syms, dynstrtab)
         @dynsym = {}
         syms.to_enum.with_index.each do |sym,idx|
           s = @factory.sym.new
@@ -452,9 +499,15 @@ module Elf
             @dynamic << @factory.dyn.new(tag: tag, val: value.addr)
           end
         }
+        unless @file.dynamic.soname.nil?
+          @dynamic << @factory.dyn.new(tag: DT::DT_SONAME, val: dynstrtab.add_string(@file.dynamic.soname))
+        end
         section_tag.call(DT::DT_PLTGOT,@file.dynamic.pltgot)
-        section_tag.call(DT::DT_INIT,@file.dynamic.init)
-        section_tag.call(DT::DT_FINI,@file.dynamic.fini)
+#        section_tag.call(DT::DT_INIT,@file.dynamic.init)
+#        section_tag.call(DT::DT_FINI,@file.dynamic.fini)
+        @dynamic << @factory.dyn.new(tag: DT::DT_INIT, val: @file.dynamic.init)
+        @dynamic << @factory.dyn.new(tag: DT::DT_FINI, val: @file.dynamic.fini)
+        
         #@file.dynamic.debug_val.each {|dbg| 
         #  @dynamic << @factory.dyn.new(tag: DT::DT_DEBUG, val: dbg)
         #}

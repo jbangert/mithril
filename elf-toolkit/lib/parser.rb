@@ -52,6 +52,7 @@ module Elf
       else
         RuntimeError.new  "Invalid ELF endianness #{ident.id_data}"
       end
+      @versions = {}
       @factory = ElfStructFactory.instance(@file.endian,@file.bits)
       parse_with_factory()
     end
@@ -111,15 +112,50 @@ module Elf
       expect_value "PROGBITS link",shdr.link,0
       ProgBits.new(@shstrtab[shdr.name], shdr.snapshot,  @data.read(shdr.siz))
     end
-    
+    def parse_verdef(shdr)
+      @unparsed_sections.delete shdr.index
+      strtab = safe_strtab(shdr.link)
+      verdefoff = shdr.off 
+      file = @file.dynamic.soname
+      versions = {}
+      parents = {}
+      shdr.info.to_i.times {
+        @data.seek  verdefoff
+        verdef = @factory.verdef.read(@data)
+        expect_value "VERDEF version", verdef.version, 1
+        verdauxoff  = verdefoff + verdef.aux
+        aux = []
+        verdef.cnt.to_i.times {
+          @data.seek verdauxoff
+          verdaux = @factory.verdaux.read(@data)
+          aux << strtab[verdaux.name]
+          verdauxoff += verdaux.nextoff.to_i
+       #   expect_value "Nonzero verdaux.nextoff #{verdaux.nextoff}", true,verdaux.nextoff != 0 unless 
+        }        
+        name = aux.first
+        par = aux[1..-1] || []
+        expect_value "Name present", false, name.nil?
+        parents[name] = par
+   #     expect_value "Version #{verdef.idx} unique", false, @versions.include? verdef.idx.to_i
+        @versions[verdef.ndx.to_i] = GnuVersion.new(file,name,verdef.flags.to_i,false)
+        versions[name] = @versions[verdef.ndx.to_i] 
+        # expect_value "Nonzero verdef.nextoff #{verdef.nextoff}", true,verdef.nextoff != 0
+        verdefoff += verdef.nextoff.to_i
+      }
+      parents.each{|version,p|
+        p.each{|x|
+#          expect_value "Valid parent version #{x}", true, versions.include? x
+          versions[version].parents << versions[x]          
+        }
+      }
+    end
     def parse_verneed(shdr)
-      @versions = {}
       @unparsed_sections.delete shdr.index
       strtab = safe_strtab(shdr.link)
       @data.seek shdr.off
       data = StringIO.new(@data.read(shdr.siz.to_i))
-      # This is the weird, screwed up 'array' implementation that
-      # they use
+      # This is the weird, screwed up 'array', that actually is a
+      # linked list
       verneedoff = 0
       shdr.info.to_i.times{ #SHDR.info has number of entries
         data.seek verneedoff
@@ -135,25 +171,34 @@ module Elf
           versionname = strtab[vernaux.name]
           flags = vernaux.flags.to_i
           version = vernaux.other.to_i
+#          expect_value "Nonzero vernaux.nextoff #{vernaux.nextoff}", true,vernaux.nextoff != 0
           
-          @versions[version] = GnuVersion.new( file,  versionname,  flags)
+          @versions[version] = GnuVersion.new( file,  versionname,  flags,true)
           vernauxoff += vernaux.nextoff
         }
-        vernauxoff += verneed.nextoff
+ #       expect_value "Nonzero verneedoff ",true, verneed.nextoff != 0
+        verneedoff += verneed.nextoff
       } 
     end
+    VERSYM_HIDDEN = 0x8000
+    VERSYM_IDX_MASK = 0xffff & ~VERSYM_HIDDEN 
     def parse_versym(shdr,dynsym)
       @data.seek shdr.off
       data = StringIO.new(@data.read(shdr.siz.to_i))
       BinData::Array.new(type: @factory.versym, initial_length: shdr.siz / @factory.versym.new.num_bytes).read(data).to_enum.with_index  {|versym,index|
-         dynsym[index].gnu_version =case versym.veridx
+        veridx = versym.veridx & VERSYM_IDX_MASK
+         dynsym[index].gnu_version =case veridx
                                     when 0
                                       :local
                                     when 1
                                       :global
                                     else
-                                      @versions[versym.veridx]          
+                                      unless @versions.include? veridx
+                                         raise RuntimeError.new "Invalid veridx #{versym.veridx} in dynamic symbol #{index}"
+                                      end
+                                      @versions[veridx]
                                     end
+        dynsym[index].hidden = (versym.veridx & VERSYM_HIDDEN != 0)
       }
     end
     DYNAMIC_FLAGS =            {
@@ -231,7 +276,7 @@ module Elf
         end
       end
 
-
+      @reladyn_indices =[]
       expect_value "DT_NULL", dynamic.last, @factory.dyn.new()
 
       by_type.delete DT::DT_NULL
@@ -254,6 +299,7 @@ module Elf
       by_type.delete DT::DT_SYMTAB
       expect_unique.call DT::DT_HASH, true# We totally ignore the hash
       by_type.delete DT::DT_HASH
+      
       retval.needed = []
       by_type[DT::DT_NEEDED].each do |needed|
         retval.needed << @dynstr[needed.val]
@@ -272,19 +318,34 @@ module Elf
       #that vaddrs don't overlap
 
       expect_unique.call(DT::DT_INIT,true).andand { |init|
-        expect_value "DT_INIT should point to a valid progbits section",
-        progbits_by_addr.include?(init.val), true
+      #  expect_value "DT_INIT should point to a valid progbits section",
+       # progbits_by_addr.include?(init.val), true
 
-        retval.init = progbits_by_addr[init.val].first
+        retval.init = init.val # progbits_by_addr[init.val].first
       }
       by_type.delete DT::DT_INIT
       expect_unique.call(DT::DT_FINI,true).andand { |init|
-        expect_value "DT_FINI should point to a valid progbits section",
-        progbits_by_addr.include?(init.val), true
+      #  expect_value "DT_FINI should point to a valid progbits section",
+      #  progbits_by_addr.include?(init.val), true
 
-        retval.fini = progbits_by_addr[init.val].first
+        retval.fini = init.val #progbits_by_addr[init.val].first
       }
       by_type.delete DT::DT_FINI
+
+      expect_unique.call(DT::DT_INIT_ARRAY,true).andand{|initarray|
+        expect_value "DT_INITARRAY needs to point to a section", true, progbits_by_addr.include?(initarray.val)
+        sect = progbits_by_addr[initarray.val].first
+        expect_value "DT_INITARRAY section type", SHT::SHT_INIT_ARRAY,sect.sect_type
+        retval.init_array  = sect
+      }
+      by_type.delete DT::DT_INIT_ARRAY
+      expect_unique.call(DT::DT_FINI_ARRAY,true).andand{|finiarray|
+        expect_value "DT_FINIARRAY needs to point to a section", true, progbits_by_addr.include?(finiarray.val)
+        sect = progbits_by_addr[finiarray.val].first
+        expect_value "DT_FINIARRAY section type", SHT::SHT_FINI_ARRAY,sect.sect_type
+        retval.fini_array  = sect
+      }
+      by_type.delete DT::DT_FINI_ARRAY
       expect_unique.call(DT::DT_PLTGOT,true).andand { |init|
         expect_value "DT_PLTGOT should point to a valid progbits section",
         progbits_by_addr.include?(init.val), true
@@ -292,7 +353,9 @@ module Elf
         retval.pltgot = progbits_by_addr[init.val].first
       }#TODO: check processor supplements
       by_type.delete DT::DT_PLTGOT
-
+      expect_unique.call(DT::DT_SONAME,true).andand {|soname|
+        retval.soname = @dynstr[soname.val]
+      }
       #TODO: write 'expect_group'
       expect_unique.call(DT::DT_RELA,true).andand{ |rela|
         x= @sect_types[SHT::SHT_RELA].group_by{|x| x.vaddr.to_i}
@@ -305,7 +368,7 @@ module Elf
         expect_unique.call(DT::DT_RELASZ,false).andand {|relasz|
           expect_value "DT_RELASZ", relasz.val, reladyn_hdr.siz
         }
-        @relocation_sections[reladyn_hdr.index].each{|rel| rel.is_dynamic = true}
+        @reladyn_indices << reladyn_hdr.index
       }
       #TODO: maybe use eval to delete duplication?
       expect_unique.call(DT::DT_REL,true).andand{ |rela|
@@ -318,7 +381,7 @@ module Elf
         expect_unique.call(DT::DT_RELSZ,false).andand {|relasz|
           expect_value "DT_RELSZ", relasz.val, reladyn_hdr.siz
         }
-        @relocation_sections[reladyn_hdr.index].each{|rel| rel.is_dynamic = true}
+        @reladyn_indices << reladyn_hdr.index
       }
       [DT::DT_RELA, DT::DT_RELAENT, DT::DT_RELASZ, DT::DT_REL, DT::DT_RELENT, DT::DT_RELSZ].each {|x|  by_type.delete x}
       #Parse RELA.plt or REL.plt
@@ -339,7 +402,7 @@ module Elf
           expect_unique.call(DT::DT_PLTRELSZ,false).andand {|relasz|
             expect_value "DT_PLTRELSZ", relasz.val, reladyn_hdr.siz
           }
-          @relocation_sections[reladyn_hdr.index].each{|rel| rel.is_dynamic = true}
+          @reladyn_indices << reladyn_hdr.index
           by_type.delete DT::DT_PLTRELSZ
         }
         by_type.delete DT::DT_PLTREL
@@ -347,7 +410,7 @@ module Elf
       by_type.delete DT::DT_JMPREL
 
       retval.debug_val = []
-      by_type[DT::DT_DEBUG].each {|x| retval.debug_val << x.val}
+      (by_type[DT::DT_DEBUG] || []).each {|x| retval.debug_val << x.val}
       by_type.delete DT::DT_DEBUG
 
       #TODO: gnu extensions
@@ -421,6 +484,9 @@ module Elf
         pp @file.extra_phdrs
       end
     end
+    def move_sections() # Some sections can float
+      @progbits.select{|x|[SHT::SHT_INIT_ARRAY, SHT::SHT_FINI_ARRAY].include? x.sect_type}.each {|x| x.addr =nil}
+    end
     def parse_with_factory()
       @data.rewind
       @hdr = @factory.hdr.read(@data)
@@ -472,42 +538,54 @@ module Elf
                                               })
 
       parse_phdrs()
+      @file.dynamic = unique_section(@sect_types, ElfFlags::SectionType::SHT_DYNAMIC).andand{|dynamic| parse_dynamic dynamic}
+      
       @symtab = unique_section(@sect_types, ElfFlags::SectionType::SHT_SYMTAB).andand {|symtab| parse_symtable symtab, safe_strtab(symtab.link) }
       @dynsym = unique_section(@sect_types, ElfFlags::SectionType::SHT_DYNSYM).andand {|symtab| parse_symtable symtab, safe_strtab(symtab.link) }
-      
-      @file.symbols = Hash.new.tap{|h| (@symtab || []).each{|sym| h[sym.name] = sym}}
+
+      unique_section(@sect_types,ElfFlags::SectionType::SHT_GNU_VERNEED).andand{|verneed| parse_verneed verneed}
+      unique_section(@sect_types,ElfFlags::SectionType::SHT_GNU_VERDEF).andand{|verdef| parse_verdef verdef}
+      unique_section(@sect_types,ElfFlags::SectionType::SHT_GNU_VERSYM).andand{|versym|
+        expect_value "Need a dynsym when we have versym", @dynsym.nil?, false
+        parse_versym versym,@dynsym
+      }
+      #TODO: Parse versions in static symbols
+      @file.symbols = SymbolTable.new.tap{|h| (@symtab || []).each{|sym|
+          h<< sym if sym.name != "" #TODO: Represent nameless symbols
+        }}
+
       (@dynsym|| []).each {|sym|
         sym.is_dynamic = true
-        if @file.symbols.include? sym.name #TODO: assert that symbols
+        staticsym =  @file.symbols.lookup(sym.name,sym.gnu_version)
+        if !staticsym.nil? and sym.name != ""#TODO: assert that symbols
           #are the same!
-          staticsym =  @file.symbols[sym.name]
           expect_value "Dynamic #{sym.name} value", sym.sectoffset, staticsym.sectoffset
           expect_value "Dynamic #{sym.name} value", sym.section, staticsym.section
           expect_value "Dynamic #{sym.name} size", sym.size,  staticsym.size
           staticsym.is_dynamic = true
+          staticsym.gnu_version = sym.gnu_version
         else
-          @file.symbols[sym.name] = sym
+          @file.symbols <<  sym
         end
       }    
       rels_addrs = [ET::ET_EXEC, ET::ET_DYN].include? @hdr.type
       rel =  (@sect_types[SHT::SHT_RELA] || []).map {|rela| [rela.index, parse_rela(rela,rels_addrs)] }+ (@sect_types[SHT::SHT_REL] || []).map{|rel| [rela.index,parse_rel(rela,rels_addrs)]}
 
-      @relocation_sections = Hash[*rel.flatten(1)]
-   
-
-      @file.dynamic = unique_section(@sect_types, ElfFlags::SectionType::SHT_DYNAMIC).andand{|dynamic| parse_dynamic dynamic}
-      
-      
-
-      #TODO: gnu extensions, in particular gnu_hash
-      unique_section(@sect_types,ElfFlags::SectionType::SHT_GNU_VERNEED).andand{|verneed| parse_verneed verneed}
-      unique_section(@sect_types,ElfFlags::SectionType::SHT_GNU_VERSYM).andand{|versym|
-        expect_value "Need a dynsym when we have versym", @dynsym.nil?, false
-        parse_versym versym,@dynsym
+      rels_by_index = Hash[*rel.flatten(1)]
+      @reladyn_indices.each {|reladyn|
+        rels_by_index[reladyn].each{|r|
+          r.is_dynamic = true
+        }
       }
+
+
+      
+      
+
       @file.notes = Hash[(@sect_types[SHT::SHT_NOTE] || []).map{|note| parse_note note}]
       #TODO: expect non-nil dynamic for some types
-      @file.relocations = @relocation_sections.values.flatten
+      @file.relocations = rels_by_index.values.flatten
+      move_sections() 
       #TODO: Validate flags
       #TODO: Validate header?
       

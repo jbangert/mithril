@@ -173,17 +173,17 @@ module ElfStructs
     half :veridx
   end
   def verdaux
-    half :name
-    half :nextoff
+    word :name
+    word :nextoff
   end
   def verdef
     half :version
     half :flags
     half :ndx
     half :cnt
-    half :hsh
-    half :aux
-    half :nextoff
+    word :hsh
+    word :aux
+    word :nextoff
   end
   def verneed
     half :version
