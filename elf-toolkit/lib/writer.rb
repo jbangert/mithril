@@ -315,7 +315,7 @@ module Elf
           if sect.phdr.nil?
             @layout.add out
           else
-            @layout.add_with_phdr out, sect.phdr, sect.phdr_flags
+            @layout.add_with_phdr [out], sect.phdr, sect.phdr_flags
           end
         end
       end
@@ -340,8 +340,9 @@ module Elf
         buckets = Array.new(nbuckets,0)
         chain = Array.new(nchain,0)
 
-        table.each {|name,idx|
-          i = Elf::Writer::elf_hash(name) % nbuckets
+        table.each {|sym,idx|
+          expect_value "Valid symbol index",idx<table.size,true
+          i = Elf::Writer::elf_hash(sym.name) % nbuckets
           if(buckets[i] == 0)
             buckets[i] = idx
           else
@@ -353,7 +354,6 @@ module Elf
           end        
         }
         hashtab.assign [nbuckets,nchain] + buckets + chain
-        pp hashtab
         sect = OutputSection.new(".hash",SHT::SHT_HASH,SHF::SHF_ALLOC,nil, hashtab.num_bytes, ".dynsym", 0,8,@file.bits/8, hashtab.to_binary_s)
         @layout.add sect
         @dynamic << @factory.dyn.new(tag: DT::DT_HASH, val: sect.vaddr)
@@ -410,15 +410,15 @@ module Elf
           verdef.flags = ver.flags
           verdef.ndx = @versions.size + 2
           @versions[ver] = @versions.size + 2
-          verdef.hsh = Elf::Writer::gnu_hash(ver.name)
+          verdef.hsh = Elf::Writer::gnu_hash(ver.version)
           verdaux = BinData::Array.new(type: @factory.verdaux)
           verdaux << @factory.verdaux.new.tap{|x|
-            x.name = dynstr.add(ver.file)
+            x.name = dynstrtab.add_string(ver.version)
             x.nextoff =  x.num_bytes
           }
           ver.parents.each {|parent|
             aux = @factory.verdaux.new
-            aux.name = dynstr.add(parent.version)
+            aux.name = dynstrtab.add_string(parent.version)
             aux.nextoff = aux.num_bytes
             verdaux << aux
           }
@@ -430,7 +430,7 @@ module Elf
             verdef.nextoff = verdaux.num_bytes + verdef.num_bytes
           end
           verdef.write(buffer)
-          vernauxs.write(buffer)
+          verdaux.write(buffer)
         }
         unless defined_versions.empty?
           sect = OutputSection.new(".gnu.version_d", SHT::SHT_GNU_VERDEF,SHF::SHF_ALLOC,nil,buffer.size,".dynstr",defined_versions.size,8,0,buffer.string)
@@ -438,7 +438,6 @@ module Elf
           @dynamic << @factory.dyn.new(tag: DT::DT_VERDEF, val: sect.vaddr)
           @dynamic << @factory.dyn.new(tag: DT::DT_VERDEFNUM, val: defined_versions.size)
         end
-        binding.pry
         @versions
       end
       def versym(versions,symbols)
@@ -472,9 +471,9 @@ module Elf
           unless sym.section.nil?
             expect_value "valid symbol offset",  sym.sectoffset <= sym.section.size,true #Symbol can point to end of section
           end
-          s.val = (sym.section.andand.addr || 0) + sym.sectoffset
+          s.val = (sym.section.andand.addr || 0) + sym.sectoffset #TODO: find output section
           s.siz = sym.size
-          @dynsym[sym.name] = idx
+          @dynsym[sym] = idx
           symtab.push s
         end
         last_local_idx = syms.to_enum.with_index.select{|v,i| v.bind == STB::STB_LOCAL}.andand.last.andand.last || -1
@@ -486,6 +485,16 @@ module Elf
         @dynamic << @factory.dyn.new(tag: DT::DT_SYMENT,val: @factory.sym.new.num_bytes)
         
       end # Produce a hash and a GNU_HASH as well
+      def init_array(name,type,sect)
+        out = BinData::Array.new(type: @factory.init_entry)
+        sect.each {|x|
+          out << @factory.init_entry.new(val: x)
+        }
+        
+        x= OutputSection.new(name, type,SHF::SHF_ALLOC  ,nil,out.size ,0,0,@factory.init_entry.new.num_bytes,@factory.init_entry.new.num_bytes , out.to_binary_s)
+        @layout.add x
+        x.vaddr
+      end
       def dynamic
         @dynamic = BinData::Array.new(:type => @factory.dyn)
         dynstrtab = StringTable.new()
@@ -497,10 +506,25 @@ module Elf
         section_tag = lambda {|tag,value|
           unless(value.nil?)
             @dynamic << @factory.dyn.new(tag: tag, val: value.addr)
+            true
+          else
+            false
           end
         }
         unless @file.dynamic.soname.nil?
           @dynamic << @factory.dyn.new(tag: DT::DT_SONAME, val: dynstrtab.add_string(@file.dynamic.soname))
+        end
+        if(@file.init_array)
+          addr = init_array(".init_array",SHT::SHT_INIT_ARRAY,@file.init_array)
+          @dynamic << @factory.dyn.new(tag: DT::DT_INIT_ARRAY, val: addr)
+          @dynamic << @factory.dyn.new(tag: DT::DT_INIT_ARRAYSZ, val: @file.init_array.size)
+          
+        end
+        if(@file.fini_array)
+          addr = init_array(@file.fini_array)
+          @dynamic << @factory.dyn.new(tag: DT::DT_FINI_ARRAY, val: addr)
+          @dynamic << @factory.dyn.new(tag: DT::DT_FINI_ARRAYSZ, val:  @file.fini_array.size)
+          
         end
         section_tag.call(DT::DT_PLTGOT,@file.dynamic.pltgot)
 #        section_tag.call(DT::DT_INIT,@file.dynamic.init)
@@ -514,7 +538,7 @@ module Elf
         #@file.dynamic.extra_dynamic.each{ |extra|
         #  @dynamic << @factory.dyn.new(tag: extra[:tag], val: extra[:val])
         #}
-
+        
         #string table
         dynstr = OutputSection.new(".dynstr", SHT::SHT_STRTAB, SHF::SHF_ALLOC,nil, dynstrtab.buf.size, 0,0,1,0,dynstrtab.buf.string)
         @layout.add dynstr 
@@ -531,7 +555,7 @@ module Elf
           relocations.each {|rel|
             entry = @factory.rela.new
             entry.off = rel.section.addr + rel.offset
-            entry.sym = @dynsym[rel.symbol.name]  #TODO: Find constant for
+            entry.sym = @dynsym[rel.symbol]  #TODO: Find constant for
             #SHN undef
             entry.type = rel.type
             entry.addend = rel.addend
@@ -596,11 +620,10 @@ module Elf
       end
       #TODO: Fix things like INTERP
       
-
       def write_to_buf #Make this memoized
         @buf.seek @factory.hdr.new.num_bytes #Leave space for header.
         #this is pretty bad
-        progbits 
+        progbits
         note
         dynamic
         interp

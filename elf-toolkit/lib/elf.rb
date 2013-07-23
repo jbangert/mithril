@@ -96,10 +96,10 @@ module Elf
   end
 
   class Symbol #All values here are section offsets
-    attr_accessor :name, :section,:type, :sectoffset, :bind, :size,:is_dynamic
+    attr_accessor :name, :section, :file ,:type, :sectoffset, :bind, :size,:is_dynamic
     attr_accessor :gnu_version, :hidden
-    def initialize(name,section,type,sectoffset, bind,size)
-      @name,@section, @type, @sectoffset, @bind, @size = name.to_s,section,type,sectoffset, bind,size
+    def initialize(name,section,file,type,sectoffset, bind,size)
+      @name,@section,@file, @type, @sectoffset, @bind, @size = name.to_s,section,file,type,sectoffset, bind,size
       @is_dynamic = false
       @gnu_version =  :global
     end
@@ -165,9 +165,14 @@ module Elf
       @is_dynamic = false
     end
   end
+  class TLS
+    attr_accessor :tbss_size,:tdata
+  end
   class ElfFile
     attr_accessor :filetype, :machine, :entry, :flags, :version
     attr_accessor :progbits, :nobits, :dynamic,  :relocations
+    attr_accessor :init_array, :fini_array
+    attr_accessor :gnu_tls
     attr_accessor :symbols, :relocated_symbols
     attr_accessor :notes, :bits, :endian, :interp, :extra_phdrs
   end

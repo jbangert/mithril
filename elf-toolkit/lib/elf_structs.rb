@@ -199,6 +199,9 @@ module ElfStructs
     word :name
     word :nextoff
   end
+  def init_entry
+    addr :val
+  end
   def stringtable
     array :strings, :type => :stringz, :initial_length=> 0 
   end
@@ -242,7 +245,7 @@ module ElfStructs
     uint32 :to
     uint32 :type
   end
-  ELF_OBJECTS =  [:sym, :rela, :rel, :dyn, :phdr, :shdr, :hdr, :note, :vernaux, :verneed, :verdef, :verdaux, :versym, :elfp_state, :elfp_call, :elfp_data, :elfp_header]
+  ELF_OBJECTS =  [:sym, :rela, :rel, :dyn, :phdr, :shdr, :hdr, :note, :vernaux, :verneed, :verdef, :verdaux, :versym, :elfp_state, :elfp_call, :elfp_data, :elfp_header, :init_entry]
   Split = {
     phdr: {
       32 => :phdr32,

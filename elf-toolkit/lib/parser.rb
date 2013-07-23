@@ -90,23 +90,23 @@ module Elf
           section =  nil
           value = sym.val.to_i
         else
-          section = @bits_by_index[sym.shndx.to_i] 
+          section = @bits_by_index[sym.shndx.to_i] || @shstrtab[@shdrs[sym.shndx.to_i].name]
+          #TODO: give InitArray,etc a virtual addr
+          expect_value "Section index #{sym.shndx.to_i} in symbol should be a section", false, section.nil? 
           if([ET::ET_EXEC, ET::ET_DYN].include? @file.filetype)
-            value = sym.val.to_i - section.addr #TODO: Only if absolute.
+            value = sym.val.to_i - @shdrs[sym.shndx.to_i].vaddr #TODO: Only if absolute.
           else 
             value = sym.val.to_i
           end
-          expect_value "Section index #{sym.shndx.to_i} in symbol should be in progbits", false, section.nil?
         end
-        
-        Symbol.new(strtab[sym.name],section, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)
+        Symbol.new(strtab[sym.name],section,@file, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)
       end
     end
     def parse_nobits(shdr)
       @unparsed_sections.delete shdr.index
       NoBits.new(@shstrtab[shdr.name],shdr)
     end
-    def parse_progbits(shdr)
+    def parse_progbits(shdr,klass=ProgBits)
       @data.seek shdr.off
       @unparsed_sections.delete shdr.index
       expect_value "PROGBITS link",shdr.link,0
@@ -252,6 +252,12 @@ module Elf
       rela = BinData::Array.new(:type => @factory.rel, :initial_length => shdr.siz/shdr.entsize).read(@data)
       parse_rel_common(rela,shdr.info, shdr.link,has_addrs)
     end
+    def parse_initarray(shdr,size)
+      expect_value "Init array size",size, shdr.siz
+      @data.seek shdr.off
+      vals = BinData::Array.new(type: @factory.init_entry,initial_length: shdr.siz/ @factory.init_entry.new.num_bytes).read(@data)
+      @file.init_array = vals.map(&:val)
+    end
     def parse_dynamic(shdr)
       retval = Dynamic.new
 
@@ -333,17 +339,17 @@ module Elf
       by_type.delete DT::DT_FINI
 
       expect_unique.call(DT::DT_INIT_ARRAY,true).andand{|initarray|
-        expect_value "DT_INITARRAY needs to point to a section", true, progbits_by_addr.include?(initarray.val)
-        sect = progbits_by_addr[initarray.val].first
-        expect_value "DT_INITARRAY section type", SHT::SHT_INIT_ARRAY,sect.sect_type
-        retval.init_array  = sect
+        shdr =  @sect_types[SHT::SHT_INIT_ARRAY].andand.first
+        expect_value "DT_INITARRAY needs to point to a INIT_ARRAY section",shdr.andand.vaddr ,initarray.val
+        size = expect_unique.call(DT::DT_INIT_ARRAYSZ,false).val.to_i
+        @file.init_array = parse_initarray(shdr,size)
       }
       by_type.delete DT::DT_INIT_ARRAY
       expect_unique.call(DT::DT_FINI_ARRAY,true).andand{|finiarray|
-        expect_value "DT_FINIARRAY needs to point to a section", true, progbits_by_addr.include?(finiarray.val)
-        sect = progbits_by_addr[finiarray.val].first
-        expect_value "DT_FINIARRAY section type", SHT::SHT_FINI_ARRAY,sect.sect_type
-        retval.fini_array  = sect
+        shdr =  @sect_types[SHT::SHT_FINI_ARRAY].andand.first
+        expect_value "DT_FINIARRAY needs to point to a FINI_ARRAY section",shdr.andand.vaddr ,finiarray.val
+        size = expect_unique.call(DT::DT_FINI_ARRAYSZ,false).val.to_i
+        @file.fini_array = parse_initarray(shdr,size)
       }
       by_type.delete DT::DT_FINI_ARRAY
       expect_unique.call(DT::DT_PLTGOT,true).andand { |init|
@@ -484,9 +490,6 @@ module Elf
         pp @file.extra_phdrs
       end
     end
-    def move_sections() # Some sections can float
-      @progbits.select{|x|[SHT::SHT_INIT_ARRAY, SHT::SHT_FINI_ARRAY].include? x.sect_type}.each {|x| x.addr =nil}
-    end
     def parse_with_factory()
       @data.rewind
       @hdr = @factory.hdr.read(@data)
@@ -523,14 +526,40 @@ module Elf
       #Keep a hash of sections by type
       @sect_types = @shdrs.group_by {|x| x.type.to_i}
       #TODO: keep track which    #sections we have already parsed to find unparsed sections
-      @bits_by_index = Hash.new.tap{|h| (@sect_types.values_at SHT::SHT_PROGBITS,SHT::SHT_INIT_ARRAY,SHT::SHT_FINI_ARRAY).reject(&:nil?).flatten.each { |s| h[s.index] = parse_progbits(s)} }
+      @bits_by_index = Hash.new.tap{|h| @sect_types[SHT::SHT_PROGBITS].andand.each { |s| h[s.index] = parse_progbits(s)} }
+      
+                                       
+                                       
       @progbits = @bits_by_index.values
       @file.progbits = @progbits
 
+      @progbits.select{|x| x.flags & SHF::SHF_TLS != 0}.each {|tdata|
+        @file.gnu_tls ||= TLS.new
+        expect_value "Only one .tdata per file",@file.gnu_tls.tdata.nil?,true
+        @file.gnu_tls.tdata = tdata
+        tdata.phdr = PT::PT_TLS
+        tdata.phdr_flags = PF::PF_R                                   
+      }
       @nobits = @sect_types[SHT::SHT_NOBITS].map{ |x| parse_nobits(x).tap{|y| y.index = x.index}}
-      @nobits.each{|nobit| @bits_by_index[nobit.index] = nobit}
+      @nobits.each{|nobit|
+        @bits_by_index[nobit.index] = nobit
+        if nobit.flags & SHF::SHF_TLS != 0
+          @file.gnu_tls ||= TLS.new
+          @file.gnu_tls.tbss_size = nobit.size
+          @nobits.delete nobit
+        end
+      }
       @file.nobits = @nobits
-
+=begin
+      @sect_types[SHT::SHT_INIT_ARRAY].andand {|x|
+        @file.init_array = parse_initarray x.first
+        @bits_by_index[x.first.index] = @file.init_array     
+      }
+      @sect_types[SHT::SHT_FINI_ARRAY].andand {|x|
+        @file.fini_array = parse_progbits x.first, InitArray
+        @bits_by_index[x.first.index] = @file.file_array     
+      }
+=end
       @relocatable_sections = SegmentTree.new(Hash.new.tap{|h|
                                                 (@progbits + @nobits).each{ |pb|
                                                   h[(pb.addr)..(pb.addr + pb.size)]=pb
@@ -585,7 +614,6 @@ module Elf
       @file.notes = Hash[(@sect_types[SHT::SHT_NOTE] || []).map{|note| parse_note note}]
       #TODO: expect non-nil dynamic for some types
       @file.relocations = rels_by_index.values.flatten
-      move_sections() 
       #TODO: Validate flags
       #TODO: Validate header?
       
