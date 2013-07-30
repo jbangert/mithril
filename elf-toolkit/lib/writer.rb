@@ -497,7 +497,7 @@ module Elf
           out << @factory.init_entry.new.tap {|i| i.val = x }
         }
         
-        x= OutputSection.new(name, type,SHF::SHF_ALLOC  ,nil,out.size ,0,0,@factory.init_entry.new.num_bytes,@factory.init_entry.new.num_bytes , out.to_binary_s)
+        x= OutputSection.new(name, type,SHF::SHF_ALLOC  ,nil,out.num_bytes ,0,0,@factory.init_entry.new.num_bytes,@factory.init_entry.new.num_bytes , out.to_binary_s)
         @layout.add x
         x.vaddr
       end
