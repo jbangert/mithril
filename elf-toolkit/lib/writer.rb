@@ -315,7 +315,7 @@ module Elf
           if sect.phdr.nil?
             @layout.add out
           else
-            @layout.add_with_phdr out, sect.phdr, sect.phdr_flags
+            @layout.add_with_phdr [out], sect.phdr, sect.phdr_flags
           end
         end
       end
@@ -438,7 +438,7 @@ module Elf
           @dynamic << @factory.dyn.new(tag: DT::DT_VERDEF, val: sect.vaddr)
           @dynamic << @factory.dyn.new(tag: DT::DT_VERDEFNUM, val: defined_versions.size)
         end
-        binding.pry
+
         @versions
       end
       def versym(versions,symbols)

@@ -585,7 +585,7 @@ module Elf
       @file.notes = Hash[(@sect_types[SHT::SHT_NOTE] || []).map{|note| parse_note note}]
       #TODO: expect non-nil dynamic for some types
       @file.relocations = rels_by_index.values.flatten
-      move_sections() 
+
       #TODO: Validate flags
       #TODO: Validate header?
       
