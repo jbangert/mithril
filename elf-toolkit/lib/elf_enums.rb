@@ -260,6 +260,8 @@ module ElfFlags
     DT_VERNEED  =  0x6ffffffe
     DT_VERNEEDNUM  =  0x6fffffff
     DT_VERSYM  =  0x6ffffff0
+    DT_VERDEF = 0x6ffffffc
+    DT_VERDEFNUM = 0x6ffffffd
   end
   class DynamicFlags < Enum # DF_
     DF_ORIGIN  =  0x0001

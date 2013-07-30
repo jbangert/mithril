@@ -96,10 +96,10 @@ module Elf
   end
 
   class Symbol #All values here are section offsets
-    attr_accessor :name, :section,:type, :sectoffset, :bind, :size,:is_dynamic
+    attr_accessor :name, :section, :file ,:type, :sectoffset, :bind, :size,:is_dynamic
     attr_accessor :gnu_version, :hidden
-    def initialize(name,section,type,sectoffset, bind,size)
-      @name,@section, @type, @sectoffset, @bind, @size = name.to_s,section,type,sectoffset, bind,size
+    def initialize(name,section,file,type,sectoffset, bind,size)
+      @name,@section,@file, @type, @sectoffset, @bind, @size = name.to_s,section,file,type,sectoffset, bind,size
       @is_dynamic = false
       @gnu_version =  :global
     end

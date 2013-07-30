@@ -98,15 +98,14 @@ module Elf
           end
           expect_value "Section index #{sym.shndx.to_i} in symbol should be in progbits", false, section.nil?
         end
-        
-        Symbol.new(strtab[sym.name],section, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)
+        Symbol.new(strtab[sym.name],section,@file, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)
       end
     end
     def parse_nobits(shdr)
       @unparsed_sections.delete shdr.index
       NoBits.new(@shstrtab[shdr.name],shdr)
     end
-    def parse_progbits(shdr)
+    def parse_progbits(shdr,klass=ProgBits)
       @data.seek shdr.off
       @unparsed_sections.delete shdr.index
       expect_value "PROGBITS link",shdr.link,0
@@ -528,11 +527,25 @@ module Elf
       @file.progbits = @progbits
 
       @nobits = @sect_types[SHT::SHT_NOBITS].map{ |x| parse_nobits(x).tap{|y| y.index = x.index}}
-      @nobits.each{|nobit| @bits_by_index[nobit.index] = nobit}
+      @nobits.each{|nobit|
+        @bits_by_index[nobit.index] = nobit
+        if nobit.flags & SHF::SHF_TLS != 0
+          @file.gnu_tls ||= TLS.new
+          @file.gnu_tls.tbss_size = nobit.size
+          @nobits.delete nobit
+        end
+      }
       @file.nobits = @nobits
 
       @relocatable_sections = SegmentTree.new(Hash.new.tap{|h|
                                                 (@progbits + @nobits).each{ |pb|
+      @progbits.select{|x| x.flags & SHF::SHF_TLS != 0}.each {|tdata|
+        @file.gnu_tls ||= TLS.new
+        expect_value "Only one .tdata per file",@file.gnu_tls.tdata.nil?,true
+        @file.gnu_tls.tdata = tdata
+        tdata.phdr = PT::PT_TLS
+        tdata.phdr_flags = PF::PF_R                                   
+      }
                                                   h[(pb.addr)..(pb.addr + pb.size)]=pb
                                                 }
                                               })
