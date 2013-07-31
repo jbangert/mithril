@@ -165,9 +165,13 @@ module Elf
       @is_dynamic = false
     end
   end
+  class TLS
+    attr_accessor :tbss_size,:tdata
+  end
   class ElfFile
     attr_accessor :filetype, :machine, :entry, :flags, :version
     attr_accessor :progbits, :nobits, :dynamic,  :relocations
+    attr_accessor :gnu_tls
     attr_accessor :symbols, :relocated_symbols
     attr_accessor :notes, :bits, :endian, :interp, :extra_phdrs
   end

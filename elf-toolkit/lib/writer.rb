@@ -66,16 +66,17 @@ module Elf
         @factory = factory
         @phdrs = [] #BinData::Array.new(:type => @factory.phdr)
         @unallocated =[]
-        @current_idx = 1
+        @sections = [OutputSection.new("", SHT::SHT_NULL, 0,0,0,0,0,0,0,"")]
+        @sections[0].index = 0
       end
       def add(*sections)       #Ordering as follows: Fixed
         #(non-nil vaddrs) go where they have to go
         # Flexible sections are added to lowest hole after section of
         # the same type
         return if sections.empty?
-        sections.each{|shdr|
-          shdr.index = @current_idx
-          @current_idx += 1
+        sections.each{|sect|
+          sect.index = @sections.size
+          @sections << sect
         }
         flags = sections.first.flags
         @layout_by_flags[flags] ||= RBTree.new()
@@ -167,31 +168,36 @@ module Elf
       end
       RESERVED_PHDRS = 16
       def write_sections(buf,filehdr)
-        first_shdr = OutputSection.new("", SHT::SHT_NULL, 0,0,0,0,0,0,0,"")
+        first_shdr = @sections.first 
         first_shdr.index = 0
-        sections = ([first_shdr] +@layout.to_a.sort_by(&:first).map(&:last) + @unallocated)
         
         #Get more clever about mapping files
         # We put actual program headers right at the beginning.
         phdr_off = buf.tell
         buf.seek phdr_off + RESERVED_PHDRS * @factory.phdr.new.num_bytes
-        idx = 0
-        shdrs = BinData::Array.new(:type=>@factory.shdr).push *sections.map{ |s|
-          expect_value "aligned to vaddr", 0,s.vaddr % s.align if s.align != 0
-          #expect_value "idx", idx,s.index
-          idx +=1 
-          #expect_value "aligned to pagesize",0, PAGESIZE % s.align 
-          if s.flags & SHF::SHF_ALLOC != 0
-            off = align_mod(buf.tell,s.vaddr, PAGESIZE)        
-          else
-            off = buf.tell
+        offset = buf.tell
+        @sections.sort_by(&:vaddr).each {|s|
+           if s.flags & SHF::SHF_ALLOC != 0
+            offset = align_mod(offset,s.vaddr, PAGESIZE)     
           end
-          s.off = off
-          buf.seek off
+          s.off = offset
+         # expect_value "Size field correct", s.siz, s.data.size
+          offset += s.data.size
+          
+        }
+        idx = 0
+       
+        shdrs = BinData::Array.new(:type=>@factory.shdr).push *@sections.map{ |s|
+          expect_value "aligned to vaddr", 0,s.vaddr % s.align if s.align != 0
+          expect_value "idx", idx,s.index
+          idx +=1 
+          #expect_value "aligned to pagesize",0, PAGESIZE % s.align
+         
+          buf.seek s.off
           buf.write(s.data) 
           link_value = lambda do |name|
             if name.is_a? String
-              sections.to_enum.with_index.select {|sect,idx| sect.name == name}.first.last rescue raise RuntimeError.new("Invalid Section reference #{name}") #Index of first match TODO: check unique
+              @sections.to_enum.with_index.select {|sect,idx| sect.name == name}.first.last rescue raise RuntimeError.new("Invalid Section reference #{name}") #Index of first match TODO: check unique
             else
               name || 0
             end
@@ -210,7 +216,7 @@ module Elf
           x
         }
         #remove
-        mapped = sections.select{|x| x.flags & SHF::SHF_ALLOC != 0}.sort_by(&:vaddr)
+        mapped = @sections.select{|x| x.flags & SHF::SHF_ALLOC != 0}.sort_by(&:vaddr)
         mapped.each_cons(2){|low,high| expect_value "Mapped sections should not overlap", true,low.vaddr + low.siz<= high.vaddr}
         load = mapped.group_by(&:flags).map{|flags,sections| # 
           sections.group_by{|x| x.vaddr - x.off}.map do |align,sections|
@@ -340,8 +346,9 @@ module Elf
         buckets = Array.new(nbuckets,0)
         chain = Array.new(nchain,0)
 
-        table.each {|name,idx|
-          i = Elf::Writer::elf_hash(name) % nbuckets
+        table.each {|sym,idx|
+          expect_value "Valid symbol index",idx<table.size,true
+          i = Elf::Writer::elf_hash(sym.name) % nbuckets
           if(buckets[i] == 0)
             buckets[i] = idx
           else
@@ -410,15 +417,15 @@ module Elf
           verdef.flags = ver.flags
           verdef.ndx = @versions.size + 2
           @versions[ver] = @versions.size + 2
-          verdef.hsh = Elf::Writer::gnu_hash(ver.name)
+          verdef.hsh = Elf::Writer::gnu_hash(ver.version)
           verdaux = BinData::Array.new(type: @factory.verdaux)
           verdaux << @factory.verdaux.new.tap{|x|
-            x.name = dynstr.add(ver.file)
+            x.name = dynstrtab.add_string(ver.version)
             x.nextoff =  x.num_bytes
           }
           ver.parents.each {|parent|
             aux = @factory.verdaux.new
-            aux.name = dynstr.add(parent.version)
+            aux.name = dynstrtab.add_string(parent.version)
             aux.nextoff = aux.num_bytes
             verdaux << aux
           }
@@ -430,7 +437,7 @@ module Elf
             verdef.nextoff = verdaux.num_bytes + verdef.num_bytes
           end
           verdef.write(buffer)
-          vernauxs.write(buffer)
+          verdaux.write(buffer)
         }
         unless defined_versions.empty?
           sect = OutputSection.new(".gnu.version_d", SHT::SHT_GNU_VERDEF,SHF::SHF_ALLOC,nil,buffer.size,".dynstr",defined_versions.size,8,0,buffer.string)
@@ -472,9 +479,9 @@ module Elf
           unless sym.section.nil?
             expect_value "valid symbol offset",  sym.sectoffset <= sym.section.size,true #Symbol can point to end of section
           end
-          s.val = (sym.section.andand.addr || 0) + sym.sectoffset
+          s.val = (sym.section.andand.addr || 0) + sym.sectoffset #TODO: find output section
           s.siz = sym.size
-          @dynsym[sym.name] = idx
+          @dynsym[sym] = idx
           symtab.push s
         end
         last_local_idx = syms.to_enum.with_index.select{|v,i| v.bind == STB::STB_LOCAL}.andand.last.andand.last || -1
@@ -531,7 +538,7 @@ module Elf
           relocations.each {|rel|
             entry = @factory.rela.new
             entry.off = rel.section.addr + rel.offset
-            entry.sym = @dynsym[rel.symbol.name]  #TODO: Find constant for
+            entry.sym = @dynsym[rel.symbol]  #TODO: Find constant for
             #SHN undef
             entry.type = rel.type
             entry.addend = rel.addend

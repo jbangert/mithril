@@ -526,6 +526,13 @@ module Elf
       @progbits = @bits_by_index.values
       @file.progbits = @progbits
 
+      @progbits.select{|x| x.flags & SHF::SHF_TLS != 0}.each {|tdata|
+        @file.gnu_tls ||= TLS.new
+        expect_value "Only one .tdata per file",@file.gnu_tls.tdata.nil?,true
+        @file.gnu_tls.tdata = tdata
+        tdata.phdr = PT::PT_TLS
+        tdata.phdr_flags = PF::PF_R                                   
+      }
       @nobits = @sect_types[SHT::SHT_NOBITS].map{ |x| parse_nobits(x).tap{|y| y.index = x.index}}
       @nobits.each{|nobit|
         @bits_by_index[nobit.index] = nobit
