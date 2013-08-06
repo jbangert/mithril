@@ -516,12 +516,21 @@ module Elf
         section_tag = lambda {|tag,value|
           unless(value.nil?)
             @dynamic << @factory.dyn.new(tag: tag, val: value.addr)
+            true
+          else
+            nil
           end
         }
         unless @file.dynamic.soname.nil?
           @dynamic << @factory.dyn.new(tag: DT::DT_SONAME, val: dynstrtab.add_string(@file.dynamic.soname))
         end
         section_tag.call(DT::DT_PLTGOT,@file.dynamic.pltgot)
+        if section_tag.call(DT::DT_INIT_ARRAY,@file.dynamic.init_array)
+          @dynamic << @factory.dyn.new(tag: DT::DT_INIT_ARRAYSZ,val: @file.dynamic.init_array.size)
+        end
+        if section_tag.call(DT::DT_FINI_ARRAY,@file.dynamic.fini_array)
+          @dynamic << @factory.dyn.new(tag: DT::DT_FINI_ARRAYSZ,val: @file.dynamic.fini_array.size)
+        end
         #        section_tag.call(DT::DT_INIT,@file.dynamic.init)
         #        section_tag.call(DT::DT_FINI,@file.dynamic.fini)
         @dynamic << @factory.dyn.new(tag: DT::DT_INIT, val: @file.dynamic.init)
