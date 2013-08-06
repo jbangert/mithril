@@ -205,7 +205,7 @@ module Elf
       DT::DT_BIND_NOW => :@bind_now,
       DT::DT_SYMBOLIC => :@symbolic
     }
-    def parse_rel_common(relocations,sect_idx,symtab_idx, uses_addresses)
+    def parse_rel_common(relocations,sect_idx,symtab_idx, uses_addresses,is_jmprel)
       case @shdrs[symtab_idx].type.to_i
       when SHT::SHT_DYNSYM
         symtab= @dynsym
@@ -214,42 +214,51 @@ module Elf
       else
         raise ArgumentError.new "Invalid link field #{symtab_idx} in relocation section"
       end
+     
       if sect_idx == 0 and uses_addresses
         applies_to = nil
       else
         applies_to = @bits_by_index[sect_idx]
         raise ArgumentError.new "Section index #{sect_idx} not referring to PROGBITS for relocation table" if applies_to.nil?
       end
+      
       relocations.map {|rel_entry|
         Relocation.new.tap { |rel|
           if  uses_addresses
             rel.section = @relocatable_sections.find(rel_entry.off.to_i).andand(&:value)
             print "Warning: Invalid relocation address 0x#{rel_entry.off.snapshot.to_s(16)}\n" unless rel.section
-            rel.offset = rel_entry.off - rel.section.addr
+            rel.offset = rel_entry.off.to_i - rel.section.addr
           else
             rel.section = applies_to
-            rel.offset = rel_entry.off
+            rel.offset = rel_entry.off.to_i
           end
           rel.type = rel_entry.type
-          rel.symbol = symtab[ rel_entry.sym]
-          rel.addend = rel_entry.addend
+          if rel_entry.sym == 0
+            rel.symbol = nil
+          else
+            rel.symbol = symtab[ rel_entry.sym]
+          end
+          rel.addend = rel_entry.addend.to_i
+          rel.is_lazy = is_jmprel
         }
       }
     end
-
+    def is_jmprel(shdr)
+      @jmprel_addr == shdr.vaddr
+    end
     def parse_rela(shdr,has_addrs)
       @unparsed_sections.delete shdr.index
       @data.seek shdr.off
       expect_value "RELA entsize", shdr.entsize, @factory.rela.new.num_bytes
       rela = BinData::Array.new(:type => @factory.rela, :initial_length => shdr.siz/shdr.entsize).read(@data)
-      parse_rel_common(rela,shdr.info, shdr.link,has_addrs)
+      parse_rel_common(rela,shdr.info, shdr.link,has_addrs,is_jmprel(shdr))
     end
     def parse_rel(shdr,has_addrs)
       @unparsed_sections.delete shdr.index
       @data.seek shdr.off
       expect_value "REL entsize", shdr.entsize, @factory.rel.new.num_bytes
       rela = BinData::Array.new(:type => @factory.rel, :initial_length => shdr.siz/shdr.entsize).read(@data)
-      parse_rel_common(rela,shdr.info, shdr.link,has_addrs)
+      parse_rel_common(rela,shdr.info, shdr.link,has_addrs,is_jmprel(shdr))
     end
     def parse_dynamic(shdr)
       retval = Dynamic.new
@@ -386,6 +395,7 @@ module Elf
       #Parse RELA.plt or REL.plt
       expect_unique.call(DT::DT_JMPREL,true).andand{ |rela| #TODO:Make
         #this better too!!!
+        @jmprel_addr = rela.val
         expect_unique.call(DT::DT_PLTREL,false).andand {|pltrel|
           if pltrel.val == DT::DT_RELA
             type = SHT::SHT_RELA

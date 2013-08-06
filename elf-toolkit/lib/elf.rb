@@ -160,8 +160,10 @@ module Elf
   class Relocation
     attr_accessor :section, :offset, :type, :symbol, :addend
     attr_accessor :is_dynamic #false for static, true otherwise.
+    attr_accessor :is_lazy # Is in PLT 
     def initialize
       @is_dynamic = false
+      @is_lazy = false
     end
   end
   class TLS

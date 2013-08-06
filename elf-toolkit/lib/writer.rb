@@ -179,7 +179,7 @@ module Elf
         offset = buf.tell
         @sections[0].off = 0
         (@layout.to_a.sort_by(&:first).map(&:last) + @unallocated).each {|s|
-           if s.flags & SHF::SHF_ALLOC != 0
+          if s.flags & SHF::SHF_ALLOC != 0
             offset = align_mod(offset,s.vaddr, PAGESIZE)     
           end
           s.off = offset
@@ -196,13 +196,13 @@ module Elf
           expect_value "idx", idx,s.index
           idx +=1 
           #expect_value "aligned to pagesize",0, PAGESIZE % s.align
-         
+          
           buf.seek s.off
           old_off = buf.tell 
           buf.write(s.data)
           pp "#{idx }#{s.name} written to offset #{old_off} to #{buf.tell}"
 
-        
+          
           expect_value "size", s.data.size, s.siz
           link_value = lambda do |name|
             if name.is_a? String
@@ -227,19 +227,20 @@ module Elf
         #remove
         mapped = @sections.select{|x| x.flags & SHF::SHF_ALLOC != 0}.sort_by(&:vaddr)
         mapped.each_cons(2){|low,high| expect_value "Mapped sections should not overlap", true,low.vaddr + low.siz<= high.vaddr}
-        load = mapped.group_by(&:flags).map{|flags,sections| # 
+        load = mapped.group_by(&:flags).map{|flags,sections| 
           sections.group_by{|x| x.vaddr - x.off}.map do |align,sections|
             memsize = sections.last.off + sections.last.siz - sections.first.off
-            sections.select{|x| x.type == SHT::SHT_NOBITS}.tap {|nobits|
-              if nobits.size > 0
-                expect_value "At most one NOBITS", nobits.size,1
-                expect_value "NOBITS is the last section",sections.last.type, SHT::SHT_NOBITS
-                last_file_addr = nobits.first.vaddr
-                memsize = sections.last.off - sections.first.off
-              end
-            }
+           # if sections.last.type == SHT::SHT_            end
+          # sections.select{|x| x.type == SHT::SHT_NOBITS}.tap {|nobits|
+          #    if nobits.size > 0
+           #     expect_value "At most one NOBITS", nobits.size,1
+           #     expect_value "NOBITS is the last section",sections.last.type, SHT::SHT_NOBITS
+           #     last_file_addr = nobits.first.vaddr
+           #     memsize = sections.last.off - sections.first.off
+           #   end
+           # } 
             LoadMap.new(sections.first.off,  sections.last.off + sections.last.siz,
-                        sections.first.vaddr, memsize,flags,sections.map(&:align).max) #TODO: LCM?
+                        sections.first.vaddr, memsize ,flags,sections.map(&:align).max) #TODO: LCM?
           end
         }.flatten     
         buf.seek 0,IO::SEEK_END
@@ -328,7 +329,7 @@ module Elf
       def progbits
         (@file.progbits + @file.nobits).each do |sect|
           out =  OutputSection.new(sect.name,sect.sect_type, sect.flags, sect.addr, sect.size,0,0,sect.align, sect.entsize, sect.data.string)
-#          binding.pry if sect.sect_type == SHT::SHT_INIT_ARRAY
+          #          binding.pry if sect.sect_type == SHT::SHT_INIT_ARRAY
           if sect.phdr.nil?
             @layout.add out
           else
@@ -420,7 +421,7 @@ module Elf
         end
 
         defined_versions = gnu_versions.select{|x| x.needed == false}
-         buffer = StringIO.new()
+        buffer = StringIO.new()
         defined_versions.each {|ver|
           expect_value "Defined version file name",ver.file, @file.dynamic.soname
           verdef = @factory.verdef.new
@@ -521,8 +522,8 @@ module Elf
           @dynamic << @factory.dyn.new(tag: DT::DT_SONAME, val: dynstrtab.add_string(@file.dynamic.soname))
         end
         section_tag.call(DT::DT_PLTGOT,@file.dynamic.pltgot)
-#        section_tag.call(DT::DT_INIT,@file.dynamic.init)
-#        section_tag.call(DT::DT_FINI,@file.dynamic.fini)
+        #        section_tag.call(DT::DT_INIT,@file.dynamic.init)
+        #        section_tag.call(DT::DT_FINI,@file.dynamic.fini)
         @dynamic << @factory.dyn.new(tag: DT::DT_INIT, val: @file.dynamic.init)
         @dynamic << @factory.dyn.new(tag: DT::DT_FINI, val: @file.dynamic.fini)
         
@@ -540,7 +541,7 @@ module Elf
         @dynamic << @factory.dyn.new(tag: DT::DT_STRSZ, val: dynstr.siz)
 
         @dynamic <<  @factory.dyn.new(tag: DT::DT_NULL, val: 0) # End marker
-        @layout.add_with_phdr [OutputSection.new(".dynamic", SHT::SHT_DYNAMIC, SHF::SHF_ALLOC, nil, @dynamic.num_bytes,".dynstr",0,8,@factory.dyn.new.num_bytes,@dynamic.to_binary_s)], PT::PT_DYNAMIC, PF::PF_R
+        @layout.add_with_phdr [OutputSection.new(".dynamic", SHT::SHT_DYNAMIC, SHF::SHF_ALLOC | SHF::SHF_WRITE, nil, @dynamic.num_bytes,".dynstr",0,8,@factory.dyn.new.num_bytes,@dynamic.to_binary_s)], PT::PT_DYNAMIC, PF::PF_R
         #dynstr -> STRTAB STRSZ
         #dynsym -> DT_SYMENT, D
       end # Write note, etc for the above
@@ -549,37 +550,46 @@ module Elf
           relocations.each {|rel|
             entry = @factory.rela.new
             entry.off = rel.section.addr + rel.offset
-            entry.sym = @dynsym[rel.symbol]  #TODO: Find constant for
-            #SHN undef
+            if rel.symbol.nil?
+              entry.sym = ElfFlags::SymbolName::STN_UNDEF              
+            else
+              entry.sym = @dynsym[rel.symbol]  
+            end
             entry.type = rel.type
             entry.addend = rel.addend
             retval.push entry
           }
         }
       end
-      def reladyn(dynstrtab)
+      
+      def reladyn(dynstrtab)        
         @file.relocations.each{ |r|
-          r.symbol.is_dynamic  = true
+          r.symbol.andand {|x|is_dynamic  = true}
         }
         dynsym(dynstrtab)
         relaentsize = @factory.rela.new.num_bytes
-        rel_by_section = @file.relocations.select(&:is_dynamic).group_by(&:section)
-        if(rel_by_section[@file.dynamic.pltgot]) 
-          relabuf=rela_buffer(rel_by_section[@file.dynamic.pltgot])
+
+        pltrel = @file.relocations.select(&:is_dynamic).select(&:is_lazy)
+        dynrel = @file.relocations.select(&:is_dynamic).select{|x| not x.is_lazy}
+        
+        unless(pltrel.empty?)
+          relabuf=rela_buffer(pltrel)
           relaplt = OutputSection.new(".rela.plt", SHT::SHT_RELA, SHF::SHF_ALLOC, nil, relabuf.num_bytes,".dynsym",@file.dynamic.pltgot.name,32, relaentsize, relabuf.to_binary_s)
           @layout.add relaplt
           @dynamic << @factory.dyn.new(tag: DT::DT_PLTRELSZ, val: relabuf.num_bytes)
           @dynamic << @factory.dyn.new(tag: DT::DT_PLTREL, val: DT::DT_RELA)
           @dynamic << @factory.dyn.new(tag: DT::DT_JMPREL, val: relaplt.vaddr)
-          rel_by_section.delete @file.dynamic.pltgot
         end
-        #All other relocations go into .rela.dyn
-        relabuf = rela_buffer(rel_by_section.values.flatten)
-        reladyn = OutputSection.new(".rela.dyn", SHT::SHT_RELA, SHF::SHF_ALLOC,nil, relabuf.num_bytes,".dynsym",0,32, relaentsize, relabuf.to_binary_s)
-        @layout.add reladyn
-        @dynamic << @factory.dyn.new(tag: DT::DT_RELA, val: reladyn.vaddr)
-        @dynamic << @factory.dyn.new(tag: DT::DT_RELASZ, val: reladyn.siz)     
-        @dynamic << @factory.dyn.new(tag: DT::DT_RELAENT, val: relaentsize)
+        unless dynrel.empty?
+          
+          #All other relocations go into .rela.dyn
+          relabuf = rela_buffer(dynrel)
+          reladyn = OutputSection.new(".rela.dyn", SHT::SHT_RELA, SHF::SHF_ALLOC,nil, relabuf.num_bytes,".dynsym",0,32, relaentsize, relabuf.to_binary_s)
+          @layout.add reladyn
+          @dynamic << @factory.dyn.new(tag: DT::DT_RELA, val: reladyn.vaddr)
+          @dynamic << @factory.dyn.new(tag: DT::DT_RELASZ, val: reladyn.siz)     
+          @dynamic << @factory.dyn.new(tag: DT::DT_RELAENT, val: relaentsize)
+        end
       end
       def write_headers
         hdr = @factory.hdr.new
