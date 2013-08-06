@@ -76,6 +76,7 @@ module Elf
         return if sections.empty?
         sections.each{|sect|
           sect.index = @sections.size
+          expect_value "Correct size", sect.data.size, sect.siz
           @sections << sect
         }
         flags = sections.first.flags
@@ -176,17 +177,20 @@ module Elf
         phdr_off = buf.tell
         buf.seek phdr_off + RESERVED_PHDRS * @factory.phdr.new.num_bytes
         offset = buf.tell
-        @sections.sort_by(&:vaddr).each {|s|
+        @sections[0].off = 0
+        (@layout.to_a.sort_by(&:first).map(&:last) + @unallocated).each {|s|
            if s.flags & SHF::SHF_ALLOC != 0
             offset = align_mod(offset,s.vaddr, PAGESIZE)     
           end
           s.off = offset
-         # expect_value "Size field correct", s.siz, s.data.size
           offset += s.data.size
           
         }
         idx = 0
-       
+        @sections.each{|s|  expect_value "Size field correct", s.siz, s.data.bytesize}
+        @sections.sort_by(&:off).each_cons(2){|low,high|
+          expect_value "Offsets should not overlap", true, low.off + low.data.bytesize <= high.off
+        }
         shdrs = BinData::Array.new(:type=>@factory.shdr).push *@sections.map{ |s|
           expect_value "aligned to vaddr", 0,s.vaddr % s.align if s.align != 0
           expect_value "idx", idx,s.index
@@ -194,7 +198,12 @@ module Elf
           #expect_value "aligned to pagesize",0, PAGESIZE % s.align
          
           buf.seek s.off
-          buf.write(s.data) 
+          old_off = buf.tell 
+          buf.write(s.data)
+          pp "#{idx }#{s.name} written to offset #{old_off} to #{buf.tell}"
+
+        
+          expect_value "size", s.data.size, s.siz
           link_value = lambda do |name|
             if name.is_a? String
               @sections.to_enum.with_index.select {|sect,idx| sect.name == name}.first.last rescue raise RuntimeError.new("Invalid Section reference #{name}") #Index of first match TODO: check unique
@@ -233,6 +242,7 @@ module Elf
                         sections.first.vaddr, memsize,flags,sections.map(&:align).max) #TODO: LCM?
           end
         }.flatten     
+        buf.seek 0,IO::SEEK_END
         
         shdrs << shstrtab(buf)
         filehdr.shstrndx = shdrs.size - 1
@@ -318,6 +328,7 @@ module Elf
       def progbits
         (@file.progbits + @file.nobits).each do |sect|
           out =  OutputSection.new(sect.name,sect.sect_type, sect.flags, sect.addr, sect.size,0,0,sect.align, sect.entsize, sect.data.string)
+#          binding.pry if sect.sect_type == SHT::SHT_INIT_ARRAY
           if sect.phdr.nil?
             @layout.add out
           else

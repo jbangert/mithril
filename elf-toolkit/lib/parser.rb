@@ -483,9 +483,7 @@ module Elf
         pp @file.extra_phdrs
       end
     end
-    def move_sections() # Some sections can float
-      @progbits.select{|x|[SHT::SHT_INIT_ARRAY, SHT::SHT_FINI_ARRAY].include? x.sect_type}.each {|x| x.addr =nil}
-    end
+
     def parse_with_factory()
       @data.rewind
       @hdr = @factory.hdr.read(@data)

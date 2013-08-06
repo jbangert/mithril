@@ -71,9 +71,8 @@ module Elf
       #      expect_value "PROGBITS entsize", @entsize,0
     end
     def data
-      StringIO.new("").tap{|x|
-        x.seek size
-        x.write '\0' # CRUMMY, but works
+      StringIO.new().tap{|x|
+        BinData::Array.new(type: :uint8le,initial_length: @size).write x
       }
     end
     def sect_type
