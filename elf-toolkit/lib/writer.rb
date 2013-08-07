@@ -116,6 +116,16 @@ module Elf
       end
 
       LoadMap = Struct.new(:off,:end,:vaddr,:memsz,:flags,:align)
+      def pagealign_loadmap(loadmaps)
+        #TODO: Be smarter about this..
+        loadmaps.sort_by(&:vaddr).each_cons(2) do |low,high|
+            if rounddown(low.vaddr + low.memsz,PAGESIZE) >= rounddown(high.vaddr,PAGESIZE)
+              low.flags |= high.flags
+              high.flags |= low.flags              
+            end
+        end
+        loadmaps
+      end
       def write_phdrs(buf,filehdr,load)
         phdrs = BinData::Array.new(:type => @factory.phdr)
         expect_value "Too many PHDRS",true, @phdrs.size + load.size < RESERVED_PHDRS
@@ -139,6 +149,7 @@ module Elf
           l.memsz += l.off
           l.off = 0
         }
+        pagealign_loadmap(load)
         load.each {|l|
           phdrs.push @factory.phdr.new.tap {|x|
             x.align = [PAGESIZE,l.align].max
@@ -275,6 +286,15 @@ module Elf
           addr = section.end
         end
       end
+      def rounddown(number,align)
+        return number if align == 0
+        case number % align
+        when 0
+          number
+        else
+          number - (number % align)
+        end
+      end
       def roundup(number, align)
         return number if align == 0
         case number % align
@@ -317,6 +337,7 @@ module Elf
         @shdrs= BinData::Array::new(type: @factory.shdr,initial_length: 0)
         @phdrs= BinData::Array::new(type: @factory.phdr,initial_length: 0)
         @buf = StringIO.new()
+        @progbit_indices = {}
         write_to_buf
       end
       def self.to_file(filename,elf)
@@ -335,6 +356,7 @@ module Elf
           else
             @layout.add_with_phdr [out], sect.phdr, sect.phdr_flags
           end
+          @progbit_indices[sect] = out.index
         end
       end
       def note
@@ -487,7 +509,8 @@ module Elf
           s.name = dynstrtab.add_string(sym.name)
           s.type = sym.type
           s.binding = sym.bind
-          s.shndx = 0
+          s.shndx = @progbit_indices[sym.section] || 0
+          
           unless sym.section.nil?
             expect_value "valid symbol offset",  sym.sectoffset <= sym.section.size,true #Symbol can point to end of section
           end
