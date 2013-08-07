@@ -20,6 +20,7 @@ module Elf
       value.chars.map(&:ord).each {|char|
         h = (h*33 + char) & 0xffffffff
       }
+      pp "Gnu_hash #{value} #{h}"
       h
     end
     class StringTable #Replace with compacting string table
@@ -441,17 +442,22 @@ module Elf
           @dynamic << @factory.dyn.new(tag: DT::DT_VERNEED, val: sect.vaddr)
           @dynamic << @factory.dyn.new(tag: DT::DT_VERNEEDNUM, val: needed_versions.size)
         end
-
         defined_versions = gnu_versions.select{|x| x.needed == false}
+        defined_versions.unshift GnuVersion.new(@file.dynamic.soname,@file.dynamic.gnu_version_basename, ElfFlags::GnuVerFlags::VERFLAG_BASE, false)
         buffer = StringIO.new()
         defined_versions.each {|ver|
+          expect_value "Defined SONAME",false, @file.dynamic.gnu_version_basename.nil?
           expect_value "Defined version file name",ver.file, @file.dynamic.soname
           verdef = @factory.verdef.new
           verdef.version = 1
           verdef.flags = ver.flags
-          verdef.ndx = @versions.size + 2
-          @versions[ver] = @versions.size + 2
-          verdef.hsh = Elf::Writer::gnu_hash(ver.version)
+          if ver.flags & ElfFlags::GnuVerFlags::VERFLAG_BASE != 0
+            verdef.ndx = 1
+          else
+            verdef.ndx = @versions.size + 2
+            @versions[ver] = @versions.size + 2
+          end
+          verdef.hsh = Elf::Writer::elf_hash(ver.version)
           verdaux = BinData::Array.new(type: @factory.verdaux)
           verdaux << @factory.verdaux.new.tap{|x|
             x.name = dynstrtab.add_string(ver.version)

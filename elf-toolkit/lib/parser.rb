@@ -147,6 +147,9 @@ module Elf
           versions[version].parents << versions[x]          
         }
       }
+      if @versions.include? 1
+        @file.dynamic.gnu_version_basename = @versions[1].version
+      end
     end
     def parse_verneed(shdr)
       @unparsed_sections.delete shdr.index

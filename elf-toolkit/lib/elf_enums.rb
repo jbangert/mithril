@@ -263,6 +263,10 @@ module ElfFlags
     DT_VERDEF = 0x6ffffffc
     DT_VERDEFNUM = 0x6ffffffd
   end
+  class GnuVerFlags < Enum
+    VERFLAG_BASE = 0x1
+    VERFLAG_WEAK = 0x2
+  end
   class DynamicFlags < Enum # DF_
     DF_ORIGIN  =  0x0001
     DF_SYMBOLIC  =  0x0002
