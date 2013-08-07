@@ -322,7 +322,7 @@ module Elf
       end
 
 
-      progbits_by_addr = @progbits.group_by(&:addr) #TODO: check
+      progbits_by_addr = (@progbits+@nobits).group_by(&:addr) #TODO: check
       #that vaddrs don't overlap
 
       expect_unique.call(DT::DT_INIT,true).andand { |init|
