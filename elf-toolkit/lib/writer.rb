@@ -443,7 +443,9 @@ module Elf
           @dynamic << @factory.dyn.new(tag: DT::DT_VERNEEDNUM, val: needed_versions.size)
         end
         defined_versions = gnu_versions.select{|x| x.needed == false}
-        defined_versions.unshift GnuVersion.new(@file.dynamic.soname,@file.dynamic.gnu_version_basename, ElfFlags::GnuVerFlags::VERFLAG_BASE, false)
+        unless @file.dynamic.gnu_version_basename.nil?
+          defined_versions.unshift GnuVersion.new(@file.dynamic.soname,@file.dynamic.gnu_version_basename, ElfFlags::GnuVerFlags::VERFLAG_BASE, false)
+        end
         buffer = StringIO.new()
         defined_versions.each {|ver|
           expect_value "Defined SONAME",false, @file.dynamic.gnu_version_basename.nil?
