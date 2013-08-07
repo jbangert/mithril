@@ -344,7 +344,7 @@ module Elf
         expect_value "DT_INITARRAY needs to point to a section", true, progbits_by_addr.include?(initarray.val)
         sect = progbits_by_addr[initarray.val].first
         expect_value "DT_INITARRAY section type", SHT::SHT_INIT_ARRAY,sect.sect_type
-        retval.init_array  = sec
+        retval.init_array  = sect
         by_type.delete DT::DT_INIT_ARRAYSZ
       }
       by_type.delete DT::DT_INIT_ARRAY
