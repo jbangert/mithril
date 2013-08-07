@@ -533,8 +533,9 @@ module Elf
       #Keep a hash of sections by type
       @sect_types = @shdrs.group_by {|x| x.type.to_i}
       #TODO: keep track which    #sections we have already parsed to find unparsed sections
-      @bits_by_index = Hash.new.tap{|h| (@sect_types.values_at SHT::SHT_PROGBITS,SHT::SHT_INIT_ARRAY,SHT::SHT_FINI_ARRAY).reject(&:nil?).flatten.each { |s| h[s.index] = parse_progbits(s)} }
-      @progbits = @bits_by_index.values
+      @bits_by_index = Hash.new.tap{|h| (@sect_types.values_at SHT::SHT_PROGBITS,SHT::SHT_NOBITS,SHT::SHT_INIT_ARRAY,SHT::SHT_FINI_ARRAY).reject(&:nil?).flatten.each { |s| h[s.index] = parse_progbits(s)} }
+      @progbits = @bits_by_index.values.select {|x| x.sect_type != SHT::SHT_NOBITS}
+      #TODO: just make NOBITS progbits for now
       @file.progbits = @progbits
 
       @progbits.select{|x| x.flags & SHF::SHF_TLS != 0}.each {|tdata|
