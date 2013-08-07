@@ -344,7 +344,8 @@ module Elf
         expect_value "DT_INITARRAY needs to point to a section", true, progbits_by_addr.include?(initarray.val)
         sect = progbits_by_addr[initarray.val].first
         expect_value "DT_INITARRAY section type", SHT::SHT_INIT_ARRAY,sect.sect_type
-        retval.init_array  = sect
+        retval.init_array  = sec
+        by_type.delete DT::DT_INIT_ARRAYSZ
       }
       by_type.delete DT::DT_INIT_ARRAY
       expect_unique.call(DT::DT_FINI_ARRAY,true).andand{|finiarray|
@@ -352,6 +353,7 @@ module Elf
         sect = progbits_by_addr[finiarray.val].first
         expect_value "DT_FINIARRAY section type", SHT::SHT_FINI_ARRAY,sect.sect_type
         retval.fini_array  = sect
+        by_type.delete DT::DT_FINI_ARRAYSZ
       }
       by_type.delete DT::DT_FINI_ARRAY
       expect_unique.call(DT::DT_PLTGOT,true).andand { |init|
@@ -364,6 +366,7 @@ module Elf
       expect_unique.call(DT::DT_SONAME,true).andand {|soname|
         retval.soname = @dynstr[soname.val]
       }
+      by_type.delete DT::DT_SONAME
       #TODO: write 'expect_group'
       expect_unique.call(DT::DT_RELA,true).andand{ |rela|
         x= @sect_types[SHT::SHT_RELA].group_by{|x| x.vaddr.to_i}
