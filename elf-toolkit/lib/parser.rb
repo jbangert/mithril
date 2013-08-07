@@ -557,13 +557,6 @@ module Elf
 
       @relocatable_sections = SegmentTree.new(Hash.new.tap{|h|
                                                 (@progbits + @nobits).each{ |pb|
-      @progbits.select{|x| x.flags & SHF::SHF_TLS != 0}.each {|tdata|
-        @file.gnu_tls ||= TLS.new
-        expect_value "Only one .tdata per file",@file.gnu_tls.tdata.nil?,true
-        @file.gnu_tls.tdata = tdata
-        tdata.phdr = PT::PT_TLS
-        tdata.phdr_flags = PF::PF_R                                   
-      }
                                                   h[(pb.addr)..(pb.addr + pb.size)]=pb
                                                 }
                                               })
