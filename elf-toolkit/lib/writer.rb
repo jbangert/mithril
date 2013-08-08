@@ -403,45 +403,8 @@ module Elf
       end
       def versions(dynsym,dynstrtab) #TODO: Use parser combinator
         @versions = {}
-        buffer = StringIO.new()
         gnu_versions =  dynsym.map(&:gnu_version).uniq.select{|x|x.is_a? GnuVersion}
-        needed_versions = gnu_versions.select{|x| x.needed == true}.group_by(&:file)
-        needed_versions.each {|file, versions|
-          #Create VERNEED for this file
-          verneed = @factory.verneed.new
-          verneed.version = 1
-          verneed.cnt = versions.size
-          verneed.file = dynstrtab.add_string(file)
-          verneed.aux = verneed.num_bytes
-          vernauxs = BinData::Array.new(type: @factory.vernaux)
-          versions.each {|ver|
-            vernauxs.push @factory.vernaux.new.tap {|x|
-              x.hsh = Elf::Writer::elf_hash(ver.version)
-              x.flags = ver.flags
-              x.other = @versions.size + 2
-              x.name = dynstrtab.add_string(ver.version)
-              x.nextoff = if vernauxs.size == versions.size - 1
-                            0
-                          else
-                            x.num_bytes
-                          end
-              @versions[ver] = x.other.to_i
-            }          
-          }
-          if (needed_versions.size == @versions.size)
-            verneed.nextoff = 0 #  0 for last
-          else
-            verneed.nextoff = verneed.num_bytes + vernauxs.num_bytes
-          end
-          verneed.write(buffer)
-          vernauxs.write(buffer)
-        }
-        unless needed_versions.empty?
-          sect = OutputSection.new(".gnu.version_r", SHT::SHT_GNU_VERNEED,SHF::SHF_ALLOC,nil,buffer.size,".dynstr",needed_versions.size,8,0,buffer.string)
-          @layout.add sect
-          @dynamic << @factory.dyn.new(tag: DT::DT_VERNEED, val: sect.vaddr)
-          @dynamic << @factory.dyn.new(tag: DT::DT_VERNEEDNUM, val: needed_versions.size)
-        end
+        
         defined_versions = gnu_versions.select{|x| x.needed == false}
         unless @file.dynamic.gnu_version_basename.nil?
           defined_versions.unshift GnuVersion.new(@file.dynamic.soname,@file.dynamic.gnu_version_basename, ElfFlags::GnuVerFlags::VERFLAG_BASE, false)
@@ -465,10 +428,14 @@ module Elf
             x.name = dynstrtab.add_string(ver.version)
             x.nextoff =  x.num_bytes
           }
-          ver.parents.each {|parent|
+          ver.parents.each_with_index {|parent,idx|
             aux = @factory.verdaux.new
             aux.name = dynstrtab.add_string(parent.version)
-            aux.nextoff = aux.num_bytes
+            aux.nextoff = if(idx == ver.parents.size - 1)
+                            0
+                          else
+                            aux.num_bytes
+                          end  
             verdaux << aux
           }
           verdef.cnt = verdaux.size
@@ -486,6 +453,46 @@ module Elf
           @layout.add sect
           @dynamic << @factory.dyn.new(tag: DT::DT_VERDEF, val: sect.vaddr)
           @dynamic << @factory.dyn.new(tag: DT::DT_VERDEFNUM, val: defined_versions.size)
+        end
+        buffer = StringIO.new()
+        needed_versions = gnu_versions.select{|x| x.needed == true}.group_by(&:file)
+        needed_idx = 0
+        needed_versions.each {|file, versions|
+          needed_idx+=1
+          #Create VERNEED for this file
+          verneed = @factory.verneed.new
+          verneed.version = 1
+          verneed.cnt = versions.size
+          verneed.file = dynstrtab.add_string(file)
+          verneed.aux = verneed.num_bytes
+          vernauxs = BinData::Array.new(type: @factory.vernaux)
+          versions.each {|ver|
+            vernauxs.push @factory.vernaux.new.tap {|x|
+              x.hsh = Elf::Writer::elf_hash(ver.version)
+              x.flags = ver.flags
+              x.other = @versions.size + 2
+              x.name = dynstrtab.add_string(ver.version)
+              x.nextoff = if vernauxs.size == versions.size - 1
+                            0
+                          else
+                            x.num_bytes
+                          end
+              @versions[ver] = x.other.to_i
+            }          
+          }
+          if (needed_versions.size == needed_idx)
+            verneed.nextoff = 0 #  0 for last
+          else
+            verneed.nextoff = verneed.num_bytes + vernauxs.num_bytes
+          end
+          verneed.write(buffer)
+          vernauxs.write(buffer)
+        }
+        unless needed_versions.empty?
+          sect = OutputSection.new(".gnu.version_r", SHT::SHT_GNU_VERNEED,SHF::SHF_ALLOC,nil,buffer.size,".dynstr",needed_versions.size,8,0,buffer.string)
+          @layout.add sect
+          @dynamic << @factory.dyn.new(tag: DT::DT_VERNEED, val: sect.vaddr)
+          @dynamic << @factory.dyn.new(tag: DT::DT_VERNEEDNUM, val: needed_versions.size)
         end
 
         @versions
@@ -517,8 +524,16 @@ module Elf
           s.name = dynstrtab.add_string(sym.name)
           s.type = sym.type
           s.binding = sym.bind
-          s.shndx = @progbit_indices[sym.section] || 0
-          
+          if sym.semantics.nil?
+            s.shndx = @progbit_indices[sym.section] || nil
+            unless s.shndx
+              pp "warning, symbol ", s,"does not have a valid progbits index"
+              s.shndx = nil
+            end
+          else
+            s.shndx = sym.semantics
+          end
+          s.other = sym.visibility
           unless sym.section.nil?
             expect_value "valid symbol offset",  sym.sectoffset <= sym.section.size,true #Symbol can point to end of section
           end

@@ -84,7 +84,6 @@ module Elf
       @unparsed_sections.delete sect.index
       BinData::Array.new( :type=> @factory.sym, :initial_length => sect.siz / sect.entsize).read(@data).map do |sym|
         #TODO: find appropriate section
-
         if sym.shndx.to_i == 0  || sym.shndx.to_i == SHN::SHN_ABS || ([ STT::STT_SECTION, STT::STT_OBJECT].include? sym.type.to_i)
           #TODO: Find section by vaddr
           section =  nil
@@ -98,7 +97,14 @@ module Elf
           end
           expect_value "Section index #{sym.shndx.to_i} in symbol should be in progbits", false, section.nil?
         end
-        Symbol.new(strtab[sym.name],section,@file, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)
+        x= Symbol.new(strtab[sym.name],section,@file, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)
+        x.visibility = sym.other.to_i & 0x3
+        if [SHN::SHN_ABS, SHN::SHN_COMMON, SHN::SHN_UNDEF, SHN::SHN_XINDEX].include? sym.shndx.to_i
+          x.semantics = sym.shndx.to_i
+        else
+          x.semantics = nil
+        end
+        x       
       end
     end
     def parse_nobits(shdr)

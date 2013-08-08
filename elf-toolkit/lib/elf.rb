@@ -15,6 +15,7 @@ module Elf
   SHN = ElfFlags::SpecialSection
   STB = ElfFlags::SymbolBinding
   STT= ElfFlags::SymbolType
+  STV= ElfFlags::SymbolVisibility
   ET = ElfFlags::Type
   PT = ElfFlags::PhdrType
   PF = ElfFlags::PhdrFlags
@@ -99,6 +100,8 @@ module Elf
   class Symbol #All values here are section offsets
     attr_accessor :name, :section, :file ,:type, :sectoffset, :bind, :size,:is_dynamic
     attr_accessor :gnu_version, :hidden
+    attr_accessor :visibility # One of STV
+    attr_accessor :semantics # Either one of the SHNs or a nil for normal symbols
     def initialize(name,section,file,type,sectoffset, bind,size)
       @name,@section,@file, @type, @sectoffset, @bind, @size = name.to_s,section,file,type,sectoffset, bind,size
       @is_dynamic = false
