@@ -61,7 +61,7 @@ module Elf
     end
   end
   class NoBits
-    attr_accessor :name, :addr, :flags, :align, :index, :phdr, :phdr_flags
+    attr_accessor :name, :addr, :flags, :align, :phdr, :phdr_flags
     def initialize(name,shdr)
       @name = name
       @addr = shdr.vaddr

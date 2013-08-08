@@ -106,15 +106,15 @@ module Elf
         x       
       end
     end
-    def parse_nobits(shdr)
-      @unparsed_sections.delete shdr.index
-      NoBits.new(@shstrtab[shdr.name],shdr)
-    end
-    def parse_progbits(shdr,klass=ProgBits)
+    def parse_progbits(shdr)
       @data.seek shdr.off
       @unparsed_sections.delete shdr.index
       expect_value "PROGBITS link",shdr.link,0
-      ProgBits.new(@shstrtab[shdr.name], shdr.snapshot,  @data.read(shdr.siz))
+      if shdr.type.to_i == SHT::SHT_NOBITS
+      NoBits.new(@shstrtab[shdr.name],shdr)
+      else
+        ProgBits.new(@shstrtab[shdr.name], shdr.snapshot,  @data.read(shdr.siz))        
+      end
     end
     def parse_verdef(shdr)
       @unparsed_sections.delete shdr.index
@@ -557,9 +557,8 @@ module Elf
         tdata.phdr = PT::PT_TLS
         tdata.phdr_flags = PF::PF_R                                   
       }
-      @nobits = @sect_types[SHT::SHT_NOBITS].map{ |x| parse_nobits(x).tap{|y| y.index = x.index}}
+      @nobits = @bits_by_index.values.select {|x| x.sect_type == SHT::SHT_NOBITS}
       @nobits.each{|nobit|
-        @bits_by_index[nobit.index] = nobit
         if nobit.flags & SHF::SHF_TLS != 0
           @file.gnu_tls ||= TLS.new
           @file.gnu_tls.tbss_size = nobit.size
