@@ -84,8 +84,7 @@ module Elf
       @unparsed_sections.delete sect.index
       BinData::Array.new( :type=> @factory.sym, :initial_length => sect.siz / sect.entsize).read(@data).map do |sym|
         #TODO: find appropriate section
-        if sym.shndx.to_i == 0  || sym.shndx.to_i == SHN::SHN_ABS || ([ STT::STT_SECTION, STT::STT_OBJECT].include? sym.type.to_i)
-          #TODO: Find section by vaddr
+        unless @bits_by_index.include? sym.shndx.to_i
           section =  nil
           value = sym.val.to_i
         else
@@ -95,7 +94,7 @@ module Elf
           else 
             value = sym.val.to_i
           end
-          expect_value "Section index #{sym.shndx.to_i} in symbol should be in progbits", false, section.nil?
+        #  expect_value "Section index #{sym.shndx.to_i} in symbol should be in progbits", false, section.nil?
         end
         x= Symbol.new(strtab[sym.name],section,@file, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)
         x.visibility = sym.other.to_i & 0x3
