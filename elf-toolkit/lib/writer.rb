@@ -447,7 +447,7 @@ module Elf
           defined_versions.unshift GnuVersion.new(@file.dynamic.soname,@file.dynamic.gnu_version_basename, ElfFlags::GnuVerFlags::VERFLAG_BASE, false)
         end
         buffer = StringIO.new()
-        defined_versions.each {|ver|
+        defined_versions.each_with_index {|ver,definedidx|
           expect_value "Defined SONAME",false, @file.dynamic.gnu_version_basename.nil?
           expect_value "Defined version file name",ver.file, @file.dynamic.soname
           verdef = @factory.verdef.new
@@ -473,7 +473,7 @@ module Elf
           }
           verdef.cnt = verdaux.size
           verdef.aux = verdef.num_bytes
-          if(needed_versions.size + defined_versions.size == @versions.size)
+          if(defined_versions.size - 1 == definedidx)
             verdef.nextoff = 0
           else
             verdef.nextoff = verdaux.num_bytes + verdef.num_bytes
