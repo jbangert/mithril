@@ -96,7 +96,7 @@ module Elf
           end
         #  expect_value "Section index #{sym.shndx.to_i} in symbol should be in progbits", false, section.nil?
         end
-        x= Symbol.new(strtab[sym.name],section,@file, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)
+        x= Symbol.new(strtab[sym.name],section, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)
         x.visibility = sym.other.to_i & 0x3
         if [SHN::SHN_ABS, SHN::SHN_COMMON, SHN::SHN_UNDEF, SHN::SHN_XINDEX].include? sym.shndx.to_i
           x.semantics = sym.shndx.to_i
