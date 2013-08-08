@@ -555,6 +555,9 @@ module Elf
         unless @file.dynamic.soname.nil?
           @dynamic << @factory.dyn.new(tag: DT::DT_SONAME, val: dynstrtab.add_string(@file.dynamic.soname))
         end
+        unless @file.dynamic.rpath.nil?
+          @dynamic << @factory.dyn.new(tag: DT::DT_RPATH, val: dynstrtab.add_string(@file.dynamic.rpath))
+        end
         section_tag.call(DT::DT_PLTGOT,@file.dynamic.pltgot)
         if section_tag.call(DT::DT_INIT_ARRAY,@file.dynamic.init_array)
           @dynamic << @factory.dyn.new(tag: DT::DT_INIT_ARRAYSZ,val: @file.dynamic.init_array.size)

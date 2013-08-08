@@ -370,6 +370,10 @@ module Elf
         retval.soname = @dynstr[soname.val]
       }
       by_type.delete DT::DT_SONAME
+      expect_unique.call(DT::DT_RPATH,true).andand{|rpath|
+        retval.rpath = @dynstr[rpath.val]
+      }
+      by_type.delete DT::DT_RPATH
       #TODO: write 'expect_group'
       expect_unique.call(DT::DT_RELA,true).andand{ |rela|
         x= @sect_types[SHT::SHT_RELA].group_by{|x| x.vaddr.to_i}

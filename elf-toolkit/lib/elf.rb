@@ -24,7 +24,7 @@ module Elf
 
   class Dynamic
     attr_accessor :bind_now, :symbolic, :needed, :init, :fini, :pltgot, :debug_val, :soname
-    attr_accessor :extra_dynamic, :soname, :init_array, :fini_array
+    attr_accessor :extra_dynamic, :soname, :init_array, :fini_array,:rpath
     attr_accessor :gnu_version_basename #Name of the base GNU version (:global)
     #TODO: I feel this should always be the SONAME, warn otherwise
   end
