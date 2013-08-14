@@ -587,8 +587,8 @@ module Elf
         end
         #        section_tag.call(DT::DT_INIT,@file.dynamic.init)
         #        section_tag.call(DT::DT_FINI,@file.dynamic.fini)
-        @dynamic << @factory.dyn.new(tag: DT::DT_INIT, val: @file.dynamic.init)
-        @dynamic << @factory.dyn.new(tag: DT::DT_FINI, val: @file.dynamic.fini)
+        @dynamic << @factory.dyn.new(tag: DT::DT_INIT, val: @file.dynamic.init) if @file.dynamic.init
+        @dynamic << @factory.dyn.new(tag: DT::DT_FINI, val: @file.dynamic.fini) if @file.dynamic.fini
         
         #@file.dynamic.debug_val.each {|dbg| 
         #  @dynamic << @factory.dyn.new(tag: DT::DT_DEBUG, val: dbg)
