@@ -128,10 +128,10 @@ module Elf
         end
         loadmaps
       end
+      attr_accessor :tbss_size
       def write_phdrs(buf,filehdr,load)
         phdrs = BinData::Array.new(:type => @factory.phdr)
         expect_value "Too many PHDRS",true, @phdrs.size + load.size < RESERVED_PHDRS
-        
         @phdrs.each {|x|
           sections, type,flags =*x
           x =  @factory.phdr.new
@@ -139,7 +139,11 @@ module Elf
           x.vaddr = sections.map(&:vaddr).min
           x.paddr = x.vaddr
           x.filesz = sections.map(&:end).max - x.vaddr
-          x.memsz = x.filesz
+          if type == PT::PT_TLS and @tbss_size #HACK
+            x.memsz = x.filesz + @tbss_size
+          else
+            x.memsz = x.filesz
+          end
           x.flags = flags
           x.off = sections.map(&:off).min
           x.type = type
@@ -351,7 +355,10 @@ module Elf
       attr_reader :buf
       private
       def progbits
-        @file.gnu_tls.andand(&:tbss).andand{|x| x.flags &= ~SHF::SHF_ALLOC}
+        @file.gnu_tls.andand(&:tbss).andand{|x|
+          x.flags &= ~SHF::SHF_ALLOC
+          @layout.tbss_size = x.size
+        }
         (@file.progbits + @file.nobits).each do |sect|
 
           out =  OutputSection.new(sect.name,sect.sect_type, sect.flags, sect.addr, sect.size,0,0,sect.align, sect.entsize, sect.data.string)
