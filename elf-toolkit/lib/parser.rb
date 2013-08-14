@@ -315,6 +315,8 @@ module Elf
       by_type.delete DT::DT_SYMTAB
       expect_unique.call DT::DT_HASH, true# We totally ignore the hash
       by_type.delete DT::DT_HASH
+      expect_unique.call DT::DT_GNU_HASH,true
+      by_type.delete DT::DT_GNU_HASH
       
       retval.needed = []
       by_type[DT::DT_NEEDED].each do |needed|
@@ -391,6 +393,10 @@ module Elf
         expect_unique.call(DT::DT_RELASZ,false).andand {|relasz|
           expect_value "DT_RELASZ", relasz.val, reladyn_hdr.siz
         }
+#        expect_unique.call(DT::DT_RELACOUNT,false).andand{|relacount|
+#          expect_value "DT_RELACOUNT", reladyn_hdr.siz / @factory.rela.new.num_bytes, relacount.val
+        #        }
+        #RELACOUNT is a different beast
         @reladyn_indices << reladyn_hdr.index
       }
       #TODO: maybe use eval to delete duplication?
@@ -406,8 +412,39 @@ module Elf
         }
         @reladyn_indices << reladyn_hdr.index
       }
-      [DT::DT_RELA, DT::DT_RELAENT, DT::DT_RELASZ, DT::DT_REL, DT::DT_RELENT, DT::DT_RELSZ].each {|x|  by_type.delete x}
+      [DT::DT_RELA, DT::DT_RELAENT, DT::DT_RELASZ, DT::DT_REL, DT::DT_RELENT, DT::DT_RELSZ, DT::DT_RELACOUNT].each {|x|  by_type.delete x}
+      expect_unique.call(DT::DT_VERSYM,true).andand{|versym|
+        x = @sect_types[SHT::SHT_GNU_VERSYM].first
+        expect_value "One versym", @sect_types[SHT::SHT_GNU_VERSYM].size, 1
+        expect_value "SHT_GNU_VERSYM points to versym", x.vaddr == versym.val.to_i, true
+      }
+      by_type.delete DT::DT_VERSYM
+      expect_unique.call(DT::DT_VERDEF,true).andand{|verdef|
+        expect_value "Only one verdef", @sect_types[SHT::SHT_GNU_VERDEF].size, 1
+        x= @sect_types[SHT::SHT_GNU_VERDEF].first
+        expect_value "DT_VERDEF points to a SHT_GNU_VERDEF", x.vaddr.to_i, verdef.val.to_i
+        expect_unique.call(DT::DT_VERDEFNUM,false).andand{|verdefnum|
+          expect_value "DT_VERDEFNUM",x.info,verdefnum.val.to_i
+        }
+      }
+      expect_unique.call(DT::DT_VERNEED,true).andand{|verdef|
+        expect_value "Only one verdef", @sect_types[SHT::SHT_GNU_VERNEED].size, 1
+        x= @sect_types[SHT::SHT_GNU_VERNEED].first
+        expect_value "DT_VERNEED points to a SHT_GNU_VERNEED", x.vaddr.to_i, verdef.val.to_i
+        expect_unique.call(DT::DT_VERNEEDNUM,true).andand{|verdefnum|
+          expect_value "DT_VERNEEDNUM",x.info,verdefnum.val.to_i
+        }
+      }
+      [DT::DT_VERDEFNUM,DT::DT_VERNEEDNUM,DT::DT_VERNEED,DT::DT_VERDEF].each{|x| by_type.delete x}      
       #Parse RELA.plt or REL.plt
+      expect_unique.call(DT::DT_FLAGS,true).andand{|flags|
+        retval.flags = flags.val.to_i
+      }
+      expect_unique.call(DT::DT_FLAGS_1,true).andand{|flags1|
+        retval.flags1 = flags1.val.to_i
+      }
+      by_type.delete DT::DT_FLAGS
+      by_type.delete DT::DT_FLAGS_1
       expect_unique.call(DT::DT_JMPREL,true).andand{ |rela| #TODO:Make
         #this better too!!!
         @jmprel_addr = rela.val

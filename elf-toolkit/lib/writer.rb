@@ -375,7 +375,7 @@ module Elf
       def interp
         if(@file.interp)
           interp  = BinData::Stringz.new(@file.interp)
-          pp interp.snapshot
+
           @layout.add_with_phdr [OutputSection.new(".interp",SHT::SHT_PROGBITS, SHF::SHF_ALLOC, nil, interp.num_bytes,0,0,1,0,interp.to_binary_s)], PT::PT_INTERP, PF::PF_R
         end
       end
@@ -400,7 +400,7 @@ module Elf
           end        
         }
         hashtab.assign [nbuckets,nchain] + buckets + chain
-        pp hashtab
+
         sect = OutputSection.new(".hash",SHT::SHT_HASH,SHF::SHF_ALLOC,nil, hashtab.num_bytes, ".dynsym", 0,8,@file.bits/8, hashtab.to_binary_s)
         @layout.add sect
         @dynamic << @factory.dyn.new(tag: DT::DT_HASH, val: sect.vaddr)
@@ -596,7 +596,12 @@ module Elf
         #@file.dynamic.extra_dynamic.each{ |extra|
         #  @dynamic << @factory.dyn.new(tag: extra[:tag], val: extra[:val])
         #}
-
+        if @file.dynamic.flags
+          @dynamic << @factory.dyn.new(tag: DT::DT_FLAGS, val: @file.dynamic.flags)
+        end
+        if @file.dynamic.flags1
+          @dynamic << @factory.dyn.new(tag: DT::DT_FLAGS_1, val: @file.dynamic.flags1)
+        end
         #string table
         dynstr = OutputSection.new(".dynstr", SHT::SHT_STRTAB, SHF::SHF_ALLOC,nil, dynstrtab.buf.size, 0,0,1,0,dynstrtab.buf.string)
         @layout.add dynstr 
