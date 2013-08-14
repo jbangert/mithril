@@ -93,8 +93,9 @@ module Elf
         if(flags & SHF::SHF_ALLOC == 0)
           sections.each {|i| @unallocated << i}
         else
-          sections.each {|i| 
-            expect_value "Sections shouldn't overlap",  range_available?(@layout,i.vaddr,i.end), true
+          sections.each {|i|
+
+            expect_value "Sections shouldn't overlap",  range_available?(@layout,i.vaddr,i.end), true 
             @layout[i.vaddr] = i 
             @layout_by_flags[i.flags][i.vaddr] = i
           }
@@ -234,6 +235,7 @@ module Elf
           x.info   = link_value.call(s.info)
           x.addralign  = s.align
           x.entsize= s.entsize
+         # x.flags |= SHF::SHF_ALLOC if(@file.gnu_tls.tbss == s)
           x
         }
         #remove
@@ -349,7 +351,9 @@ module Elf
       attr_reader :buf
       private
       def progbits
+        @file.gnu_tls.andand(&:tbss).andand{|x| x.flags &= ~SHF::SHF_ALLOC}
         (@file.progbits + @file.nobits).each do |sect|
+
           out =  OutputSection.new(sect.name,sect.sect_type, sect.flags, sect.addr, sect.size,0,0,sect.align, sect.entsize, sect.data.string)
           #          binding.pry if sect.sect_type == SHT::SHT_INIT_ARRAY
           if sect.phdr.nil?
@@ -359,6 +363,7 @@ module Elf
           end
           @progbit_indices[sect] = out.index
         end
+        
       end
       def note
         os= @file.notes.map {|name,note|

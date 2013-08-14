@@ -172,7 +172,7 @@ module Elf
     end
   end
   class TLS
-    attr_accessor :tbss_size,:tdata
+    attr_accessor :tbss,:tdata
   end
   class ElfFile
     attr_accessor :filetype, :machine, :entry, :flags, :version

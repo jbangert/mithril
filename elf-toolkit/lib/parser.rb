@@ -561,8 +561,7 @@ module Elf
       @nobits.each{|nobit|
         if nobit.flags & SHF::SHF_TLS != 0
           @file.gnu_tls ||= TLS.new
-          @file.gnu_tls.tbss_size = nobit.size
-          @nobits.delete nobit
+          @file.gnu_tls.tbss = nobit
         end
       }
       @file.nobits = @nobits
