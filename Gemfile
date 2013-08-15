@@ -1,9 +1,3 @@
 source 'http://rubygems.org'
-gem 'bindata', :path => "../bindata/"
-gem 'renum'  , '1.4.0'
-gem 'andand'
-gem 'segment_tree'
-gem 'rbtree-pure'
-gem 'pry'
-gem 'pry-debugger'
-gem 'pry-stack_explorer'
+gemspec
+gem 'bindata', :github => "jbangert/bindata", :branch => "typeclass"
