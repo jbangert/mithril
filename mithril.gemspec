@@ -8,8 +8,8 @@ Gem::Specification.new do |spec|
   spec.version       = Mithril::VERSION
   spec.authors       = ["Julian Bangert"]
   spec.email         = ["jbangert@acm.org"]
-  spec.description   = %q{TODO: Write a gem description}
-  spec.summary       = %q{TODO: Write a gem summary}
+  spec.description   = %q{In Soviet Russia, Mithril forges Elf}
+  spec.summary       = %q{The Mithril toolkit for canonical elf manipulation}
   spec.homepage      = ""
   spec.license       = "MIT"
 
@@ -20,7 +20,7 @@ Gem::Specification.new do |spec|
 
   spec.add_development_dependency "bundler", "~> 1.3"
   spec.add_development_dependency "rake"
-  spec.add_dependency 'bindata'
+  spec.add_dependency 'bindata', '>=1.5.0'
   spec.add_dependency 'renum'  , '1.4.0'
   spec.add_dependency 'andand'
   spec.add_dependency 'segment_tree'
