@@ -1,5 +1,5 @@
-require_relative 'parser'
-require_relative 'writer'
+#!/usr/bin/env ruby
+require 'mithril'
 
 nginx_path = "/home/julian/important/12W/elf-policy/webserver-samples/nginx-install/sbin/"
 $parse = Elf::Parser.from_file (ARGV[0] || nginx_path + "nginx-ori")

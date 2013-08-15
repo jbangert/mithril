@@ -1,4 +1,4 @@
-require 'bundler'
+# require 'bundler'
 require 'andand'
 require_relative 'elf_enums'
 require_relative 'elf_structs'
