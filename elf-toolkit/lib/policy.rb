@@ -3,6 +3,9 @@ require 'bindata'
 #TR2013-727 (ELFbac)
 module Elf
   module Policy
+    def self.section_symbol_name(file_name,section_name)
+        "_elfp_#{file_name}#{section_name}"
+    end
     R = ElfFlags::Relocation
     ELFP = ElfFlags::ElfPData
     class Transition
@@ -96,7 +99,7 @@ module Elf
             x.low = resolve_reference(elffile,relocations,x.low.offset,data.low)
             if(data.high.nil?)
               raise ArgumentError.new "Need to specify a range when using fixed addresses in data transition #{data}" if data.high.is_a? Integer
-              x.high = 2**64-1
+              x.high = 0 # 2**64-1
               x.type|= ELFP::ELFP_RW_SIZE
               relocations << Elf::Relocation.new.tap{|rel|
                 rel.type = R::R_X86_64_SIZE64
@@ -139,7 +142,15 @@ module Elf
       def initialize(from,pol)
         @from = from
         @policy = pol
-      end      
+      end
+
+      {
+        text: ".text",
+        data: ".data",
+        bss:".bss"
+      }.each{|function,name|
+        define_method function, lambda{|library| section(name,library)}
+      }
       def call(to,symbol, parambytes= 0, returnbytes=0)
         @policy << Call.new(@from,to, symbol, parambytes, returnbytes)
       end

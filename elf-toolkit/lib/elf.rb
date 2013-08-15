@@ -2,6 +2,7 @@ require 'bundler'
 require 'andand'
 require_relative 'elf_enums'
 require_relative 'elf_structs'
+require 'fileutils'
 
 require 'pp'
 require 'set'
@@ -22,7 +23,12 @@ module Elf
   NOTE_ALIGN = 4
   NOTE_FLAGS = SHF::SHF_ALLOC
   NOTE_ENTSIZE =0
-
+  def self.rewrite(filename,&block)    
+    FileUtils::cp(filename,filename+".bak")
+    file = Elf::Parser::from_file(filename)
+    block.call(file)
+    Elf::Writer::Writer.to_file(filename,file)
+  end
   class Dynamic
     attr_accessor :bind_now, :symbolic, :needed, :init, :fini, :pltgot, :debug_val, :soname
     attr_accessor :extra_dynamic, :soname, :init_array, :fini_array,:rpath
@@ -108,6 +114,8 @@ module Elf
       @name,@section, @type, @sectoffset, @bind, @size = name.to_s,section,type,sectoffset, bind,size
       @is_dynamic = false
       @gnu_version =  :global
+      @visibility = ElfFlags::SymbolVisibility::STV_DEFAULT
+      @hidden = false
     end
   end
   class SymbolTable
