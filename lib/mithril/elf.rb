@@ -15,6 +15,7 @@ module Elf
   SHF = ElfFlags::SectionFlags
   SHN = ElfFlags::SpecialSection
   STB = ElfFlags::SymbolBinding
+  SHN = ElfFlags::SpecialSection
   STT= ElfFlags::SymbolType
   STV= ElfFlags::SymbolVisibility
   ET = ElfFlags::Type
@@ -110,6 +111,12 @@ module Elf
     attr_accessor :gnu_version, :hidden
     attr_accessor :visibility # One of STV
     attr_accessor :semantics # Either one of the SHNs or a nil for normal symbols
+    def dynamic?
+      is_dynamic
+    end
+    def undefined?
+      semantics == SHN::SHN_UNDEF
+    end
     def initialize(name,section,type,sectoffset, bind,size)
       @name,@section, @type, @sectoffset, @bind, @size = name.to_s,section,type,sectoffset, bind,size
       @is_dynamic = false

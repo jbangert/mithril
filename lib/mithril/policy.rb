@@ -149,7 +149,7 @@ module Elf
         data: ".data",
         bss:".bss"
       }.each{|function,name|
-        define_method function, lambda{|library| section(name,library)}
+        define_method function, lambda{|library=''| section(name,library)}
       }
       def call(to,symbol, parambytes= 0, returnbytes=0)
         @policy << Call.new(@from,to, symbol, parambytes, returnbytes)
@@ -158,7 +158,7 @@ module Elf
         d = Data.new(@from,to,low,high)
         DataBuilder.new(d).instance_eval(block)
         @policy << d
-      end
+      end 
       def transition(trans)
         @policy << trans 
       end
