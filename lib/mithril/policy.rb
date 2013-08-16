@@ -30,7 +30,7 @@ module Elf
       end
     end
     class Policy
-      attr_accessor :data, :calls
+      attr_accessor :data, :calls, :start
       def states
         t = [data + calls]
         (t.map(&:from) + t.map(&:to)).uniq 
@@ -69,13 +69,17 @@ module Elf
         out = @factory.elfp_header.new()
         states = {}
         relocations = []
+        states = states()
+        @start = states.first unless states.include? @start
         #These have to be filled in the order in which they are written
-        self.states.with_index.each do |state,index|
+        states.with_index.each do |state,index|
+          id = index + 2
+          id = 1 if @start == state
           out.states << @factory.elfp_state.new.tap {|x|
-            x.id = index + 1
+            x.id = id
             x.stackid = 0 
           }
-          states[state] = index  + 1
+          states[state] = id
         end        
         self.calls.each do |call|
           out.calls << @factory.elfp_call.new.tap {|x|
@@ -128,7 +132,7 @@ module Elf
       def initialize(transition)
         @transition = transition
       end
-      def read(v=true)
+      def read(v=true) #TODO: Unify transitions? Intervaltree?
         @transition.read = v
       end
       def write(v=true)
@@ -139,8 +143,9 @@ module Elf
       end      
     end
     class StateBuilder
-      def initialize(from,pol)
+      def initialize(from,to,pol)
         @from = from
+        @to = to
         @policy = pol
       end
 
@@ -151,24 +156,46 @@ module Elf
       }.each{|function,name|
         define_method function, lambda{|library=''| section(name,library)}
       }
-      def call(to,symbol, parambytes= 0, returnbytes=0)
-        @policy << Call.new(@from,to, symbol, parambytes, returnbytes)
+      def call(symbol, parambytes= 0, returnbytes=0)
+        raise RuntimeError.new "Call has to have a destination" if @from != @to 
+        @policy << Call.new(@from,@to, symbol, parambytes, returnbytes)
       end
-      def range(to,low,high, &block)
-        d = Data.new(@from,to,low,high)
+      def range(low,high=nil, &block)
+        d = Data.new(@from,@to,low,high)
         DataBuilder.new(d).instance_eval(block)
         @policy << d
-      end 
+      end
+      def exec(low,high=nil)
+        range(low,high){
+          exec
+        }
+      end
+      def read(low,high=nil)
+        range(low,high){
+          read
+        }
+      end
+      def write(low,high=nil)
+        range(low,high){
+          write
+        }
+      end
+      
+      def to(name,&block)
+        raise RuntimeError.new "Cannot nest to{} blocks" if @from != @to#  or name == @from
+        StateBuilder.new(@from,name, @policy).instance_eval block 
+      end
       def transition(trans)
         @policy << trans 
       end
     end
     class PolicyBuilder
+      attr_reader :policy
       def initialize()
         @policy = Policy.new()
       end
       def state(name, &block)
-        StateBuilder.new(name,@policy).instance_eval block
+        StateBuilder.new(name,name,@policy).instance_eval block
       end
       
       def call_noreturn(from,to,symbol, parambytes=0)
@@ -177,9 +204,13 @@ module Elf
       def read
         @policy << Data.new(from,to,from,to )
       end
+      def start(name)
+        @policy.start = name
+      end
     end
     def build_policy(&block)
-      x= PolicyBuilder.new().instance_eval block 
+      x= PolicyBuilder.new().instance_eval block
+      x.policy
     end
   end
 

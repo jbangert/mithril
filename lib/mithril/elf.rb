@@ -64,7 +64,6 @@ module Elf
       end
       
     end
-    
     def size
       @data.size
     end
