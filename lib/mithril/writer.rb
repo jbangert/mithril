@@ -27,6 +27,7 @@ module Elf
       attr_reader :buf
       def initialize 
         @buf = StringIO.new("\0")
+        @buf.seek 1 
         @strings = {} #TODO: Do substring matching, compress the string
         #table.
         # Actually, make all string tables except dynstr one, might save
@@ -396,7 +397,8 @@ module Elf
         chain = Array.new(nchain,0)
 
         table.each {|sym,idx|
-          expect_value "Valid symbol index",idx<table.size,true
+          
+          expect_value "Valid symbol index",idx > 0 && idx<=table.size,true
           i = Elf::Writer::elf_hash(sym.name) % nbuckets
           if(buckets[i] == 0)
             buckets[i] = idx
@@ -533,6 +535,7 @@ module Elf
         syms = @file.symbols.select(&:is_dynamic)
         versions = versions(syms, dynstrtab)
         @dynsym = {}
+        symtab << @factory.sym.new
         syms.to_enum.with_index.each do |sym,idx|
           s = @factory.sym.new
           s.name = dynstrtab.add_string(sym.name)
@@ -553,7 +556,7 @@ module Elf
           end
           s.val = (sym.section.andand.addr || 0) + sym.sectoffset #TODO: find output section
           s.siz = sym.size
-          @dynsym[sym] = idx
+          @dynsym[sym] = symtab.size
           symtab.push s
         end
         last_local_idx = syms.to_enum.with_index.select{|v,i| v.bind == STB::STB_LOCAL}.andand.last.andand.last || -1
@@ -641,7 +644,7 @@ module Elf
       
       def reladyn(dynstrtab)        
         @file.relocations.each{ |r|
-          r.symbol.andand {|x|is_dynamic  = true}
+          r.symbol.andand {|x| x.is_dynamic  = true}
         }
         dynsym(dynstrtab)
         relaentsize = @factory.rela.new.num_bytes
