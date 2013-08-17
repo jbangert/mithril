@@ -1,5 +1,4 @@
 module Elf::Policy
- 
   def self.inject_symbols(file)
       case file.filetype
       when ElfFlags::Type::ET_EXEC

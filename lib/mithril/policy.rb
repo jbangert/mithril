@@ -32,7 +32,7 @@ module Elf
     class Policy
       attr_accessor :data, :calls, :start
       def states
-        t = [data + calls]
+        t = data + calls
         (t.map(&:from) + t.map(&:to)).uniq 
       end
       def <<(*transitions)
@@ -66,34 +66,35 @@ module Elf
         end
       end
       def write_amd64(elffile)
-        out = @factory.elfp_header.new()
-        states = {}
+        factory = ElfStructFactory.instance(:little,64)
+        out = factory.elfp_header.new()
+        state_ids = {}
         relocations = []
         states = states()
         @start = states.first unless states.include? @start
         #These have to be filled in the order in which they are written
-        states.with_index.each do |state,index|
+        states.each_with_index do |state,index|
           id = index + 2
           id = 1 if @start == state
-          out.states << @factory.elfp_state.new.tap {|x|
+          out.states << factory.elfp_state.new.tap {|x|
             x.id = id
             x.stackid = 0 
           }
-          states[state] = id
+          state_ids[state] = id
         end        
         self.calls.each do |call|
-          out.calls << @factory.elfp_call.new.tap {|x|
-            x.from = states[call.from]
-            x.to = states[call.to]
+          out.calls << factory.elfp_call.new.tap {|x|
+            x.from = state_ids[call.from]
+            x.to = state_ids[call.to]
             x.parambytes = call.parambytes
             x.returnbytes = call.parambytes
           }
           out.calls.last.off = resolve_reference(elffile,relocations,out.calls.last.off.offset, call.symbol)
         end
         self.data.each do |data|
-          out.data << @factory.elfp_data.new.tap {|x|
-            x.from = states[data.from]
-            x.to = states[data.to]
+          out.data << factory.elfp_data.new.tap {|x|
+            x.from = state_ids[data.from]
+            x.to = state_ids[data.to]
             x.type = 0
             x.type |= ELFP::ELFP_RW_READ if data.read
             x.type |= ELFP::ELFP_RW_WRITE if data.write
@@ -102,13 +103,13 @@ module Elf
           out.data.last.tap {|x|
             x.low = resolve_reference(elffile,relocations,x.low.offset,data.low)
             if(data.high.nil?)
-              raise ArgumentError.new "Need to specify a range when using fixed addresses in data transition #{data}" if data.high.is_a? Integer
+              raise ArgumentError.new "Need to specify a range when using fixed addresses in data transition #{data}" if data.high.is_a? Numeric
               x.high = 0 # 2**64-1
               x.type|= ELFP::ELFP_RW_SIZE
               relocations << Elf::Relocation.new.tap{|rel|
                 rel.type = R::R_X86_64_SIZE64
                 rel.offset = x.high.offset
-                raise RuntimeError.new "Symbol #{x.low} not found" unless elffile.symbols.include? ref    
+                raise RuntimeError.new "Symbol #{data.low} not found" unless elffile.symbols.include? data.low    
                 rel.symbol = elffile.symbols[x.low]
                 rel.addend = 0
                 rel.is_dynamic = true
@@ -119,13 +120,25 @@ module Elf
           }
         end
         out = Elf::ProgBits.new(".elfbac",nil,out.to_binary_s)
-        out.phdr = ElfFlags::PhdrType::PHDR_PT_ELFBAC
+        out.align = 8
+        out.flags = SHF::SHF_ALLOC | SHF::SHF_WRITE
+        out.sect_type = SHT::SHT_PROGBITS
+        out.phdr = ElfFlags::PhdrType::PT_ELFBAC
         out.phdr_flags =  ElfFlags::PhdrFlags::PF_R
         relocations.each { |rel|
           rel.section = out
           elffile.relocations << rel
         }
         elffile.progbits << out
+        
+      end
+      def inject(file)
+        case file.machine
+        when ElfFlags::Machine::EM_X86_64
+          write_amd64(file)
+        else
+          raise RuntimeError.new "Wrong architecture for ARM64"
+        end
       end
     end
     class DataBuilder
@@ -157,18 +170,17 @@ module Elf
         define_method function, lambda{|library=''| section(name,library)}
       }
       def call(symbol, parambytes= 0, returnbytes=0)
-        raise RuntimeError.new "Call has to have a destination" if @from != @to 
+        raise RuntimeError.new "Call has to have a destination" if @from == @to 
         @policy << Call.new(@from,@to, symbol, parambytes, returnbytes)
       end
       def range(low,high=nil, &block)
         d = Data.new(@from,@to,low,high)
-        DataBuilder.new(d).instance_eval(block)
+        DataBuilder.new(d).instance_eval(&block)
         @policy << d
       end
       def exec(low,high=nil)
         range(low,high){
-          exec
-        }
+          exec        }
       end
       def read(low,high=nil)
         range(low,high){
@@ -183,7 +195,7 @@ module Elf
       
       def to(name,&block)
         raise RuntimeError.new "Cannot nest to{} blocks" if @from != @to#  or name == @from
-        StateBuilder.new(@from,name, @policy).instance_eval block 
+        StateBuilder.new(@from,name, @policy).instance_eval(&block)
       end
       def transition(trans)
         @policy << trans 
@@ -195,7 +207,7 @@ module Elf
         @policy = Policy.new()
       end
       def state(name, &block)
-        StateBuilder.new(name,name,@policy).instance_eval block
+        StateBuilder.new(name,name,@policy).instance_eval(&block)
       end
       
       def call_noreturn(from,to,symbol, parambytes=0)
@@ -208,8 +220,9 @@ module Elf
         @policy.start = name
       end
     end
-    def build_policy(&block)
-      x= PolicyBuilder.new().instance_eval block
+    def self.build(&block)
+      x= PolicyBuilder.new()
+      x.instance_eval(&block)
       x.policy
     end
   end

@@ -345,6 +345,7 @@ module Elf
         @phdrs= BinData::Array::new(type: @factory.phdr,initial_length: 0)
         @buf = StringIO.new()
         @progbit_indices = {}
+        @section_vaddrs = {}
         write_to_buf
       end
       def self.to_file(filename,elf)
@@ -369,6 +370,7 @@ module Elf
             @layout.add_with_phdr [out], sect.phdr, sect.phdr_flags
           end
           @progbit_indices[sect] = out.index
+          @section_vaddrs[sect] = out.vaddr
         end
         
       end
@@ -624,7 +626,7 @@ module Elf
         BinData::Array.new(:type =>@factory.rela).new.tap{|retval|
           relocations.each {|rel|
             entry = @factory.rela.new
-            entry.off = rel.section.addr + rel.offset
+            entry.off = @section_vaddrs[rel.section] + rel.offset
             if rel.symbol.nil?
               entry.sym = ElfFlags::SymbolName::STN_UNDEF              
             else
