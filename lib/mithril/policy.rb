@@ -4,7 +4,7 @@ require 'bindata'
 module Elf
   module Policy
     def self.section_symbol_name(file_name,section_name)
-        "_elfp_#{file_name}#{section_name}"
+        "_elfp_#{file_name}.#{section_name}"
     end
     R = ElfFlags::Relocation
     ELFP = ElfFlags::ElfPData
@@ -31,6 +31,7 @@ module Elf
     end
     class Policy
       attr_accessor :data, :calls, :start
+      attr_accessor :imported_symbols
       def states
         t = data + calls
         (t.map(&:from) + t.map(&:to)).uniq 
@@ -49,6 +50,7 @@ module Elf
       def initialize
         @data=[]
         @calls=[]
+        @imported_symbols = {}
       end
       def resolve_reference(elffile, relocations,offset, ref)
         if(ref.is_a? Integer)
@@ -67,6 +69,11 @@ module Elf
       end
       def write_amd64(elffile)
         factory = ElfStructFactory.instance(:little,64)
+        @imported_symbols.each_key {|symbol|
+          elffile.symbols << Elf::Symbol.new(symbol,nil,Elf::STT::STT_SECTION, 0, Elf::STB::STB_GLOBAL, 0).tap {|x|
+            x.semantics = Elf::SHN::SHN_UNDEF
+          }
+        }
         out = factory.elfp_header.new()
         state_ids = {}
         relocations = []
@@ -110,7 +117,7 @@ module Elf
                 rel.type = R::R_X86_64_SIZE64
                 rel.offset = x.high.offset
                 raise RuntimeError.new "Symbol #{data.low} not found" unless elffile.symbols.include? data.low    
-                rel.symbol = elffile.symbols[x.low]
+                rel.symbol = elffile.symbols[data.low]
                 rel.addend = 0
                 rel.is_dynamic = true
               }
@@ -141,7 +148,13 @@ module Elf
         end
       end
     end
+    module BuilderHelper
+      def section(name,file_name="")
+        Elf::Policy.section_symbol_name(file_name,name).tap{|x| @policy.imported_symbols[x] = true}  
+      end
+    end
     class DataBuilder
+      include BuilderHelper
       def initialize(transition)
         @transition = transition
       end
@@ -156,6 +169,7 @@ module Elf
       end      
     end
     class StateBuilder
+      include BuilderHelper
       def initialize(from,to,pol)
         @from = from
         @to = to
@@ -202,14 +216,14 @@ module Elf
       end
     end
     class PolicyBuilder
+      include BuilderHelper
       attr_reader :policy
       def initialize()
         @policy = Policy.new()
       end
       def state(name, &block)
         StateBuilder.new(name,name,@policy).instance_eval(&block)
-      end
-      
+      end      
       def call_noreturn(from,to,symbol, parambytes=0)
         @policy << Call.new(from,to, symbol, parambytes,-1)        
       end
