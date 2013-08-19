@@ -13,7 +13,6 @@ module Elf
   DT = ElfFlags::DynamicType
   SHT = ElfFlags::SectionType
   SHF = ElfFlags::SectionFlags
-  SHN = ElfFlags::SpecialSection
   STB = ElfFlags::SymbolBinding
   SHN = ElfFlags::SpecialSection
   STT= ElfFlags::SymbolType
