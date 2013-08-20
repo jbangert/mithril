@@ -89,12 +89,12 @@ module Elf
           value = sym.val.to_i
         else
           section = @bits_by_index[sym.shndx.to_i]
-          section = ".interp" if section.name == ".interp" #HACK: this should not be the case
           if([ET::ET_EXEC, ET::ET_DYN].include? @file.filetype)
             value = sym.val.to_i - section.addr #TODO: Only if absolute.
           else 
             value = sym.val.to_i
           end
+          section = ".interp" if section.name == ".interp" #HACK: this should not be the case
         #  expect_value "Section index #{sym.shndx.to_i} in symbol should be in progbits", false, section.nil?
         end
         x= Symbol.new(strtab[sym.name],section, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)

@@ -79,7 +79,7 @@ module Elf
         return [] if sections.empty?
         sections.each{|sect|
           sect.index = @sections.size
-          expect_value "Correct size", sect.data.size, sect.siz
+          expect_value "Correct size", sect.data.bytesize, sect.siz
           @sections << sect
           retval << sect.index
         }
