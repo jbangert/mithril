@@ -626,7 +626,13 @@ module Elf
       @file.symbols = SymbolTable.new.tap{|h| (@symtab || []).each{|sym|
           h<< sym if sym.name != "" #TODO: Represent nameless symbols
         }}
-
+      if(@file.symbols.include? "_DYNAMIC") #HACK: This is how we detect ld.so and friends
+        @file.pinned_sections ||= {}
+        dyn_section = unique_section(@sect_types,Elf::SHT::SHT_DYNAMIC)
+        expect_value "_DYNAMIC symbol points to dynamic section", @file.symbols["_DYNAMIC"].section, nil
+        expect_value "_DYNAMIC symbol points to dynamic section", @file.symbols["_DYNAMIC"].sectoffset, dyn_section.vaddr.to_i
+        @file.pinned_sections[".dynamic"] = {vaddr: dyn_section.vaddr.to_i, size: dyn_section.siz.to_i}
+      end
       (@dynsym|| []).each {|sym|
         sym.is_dynamic = true
         staticsym =  @file.symbols.lookup(sym.name,sym.gnu_version)

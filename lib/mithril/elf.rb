@@ -195,6 +195,7 @@ module Elf
     attr_accessor :gnu_tls
     attr_accessor :symbols, :relocated_symbols
     attr_accessor :notes, :bits, :endian, :interp, :extra_phdrs
+    attr_accessor :pinned_sections #Some binaries rely on specific address layouts (esp. ld.so)
   end
 end
 

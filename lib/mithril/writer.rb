@@ -59,7 +59,7 @@ module Elf
       end
       
     end
-    
+
     class Layout
       def initialize(factory)
         @layout_by_flags = {}
@@ -70,6 +70,15 @@ module Elf
         @unallocated =[]
         @sections = [OutputSection.new("", SHT::SHT_NULL, 0,0,0,0,0,0,0,"")]
         @sections[0].index = 0
+
+        @pinned_sections = {} # Name to vaddr
+      end
+      def pin_section(name,size,vaddr)
+        x = OutputSection.new(".pin_dummy",SHT::SHT_NULL,0,vaddr,0,0,0,0,0,
+                              BinData::Array.new(type: :int8, initial_length: size).to_binary_s)
+        raise RuntimeError.new "Invalid pin" unless range_available?(@layout,vaddr,vaddr+size)
+        @layout[vaddr] = x
+        @pinned_sections[name] = vaddr
       end
       def [](idx)
         @sections[idx]
@@ -93,7 +102,13 @@ module Elf
             expect_value "All adjacent sections have the same flags", i.flags,flags
             expect_value "All sections must float", i.vaddr, nil
           }
-          allocate_sections(sections)
+          if sections.length == 1 && @pinned_sections.include?(sections.first.name)
+            sections.first.vaddr = @pinned_sections[sections.first.name]
+            @layout.delete sections.first.vaddr
+            @pinned_sections.delete @sections.first.name
+          else
+            allocate_sections(sections)
+          end
         end
         #TODO: Handle the damn nobits
         if(flags & SHF::SHF_ALLOC == 0)
@@ -355,6 +370,9 @@ module Elf
         @buf = StringIO.new()
         @progbit_indices = {}
         @section_vaddrs = {}
+
+        @file.pinned_sections.each {|name,pin|  @layout.pin_section(name,pin[:size],pin[:vaddr])
+        }
         write_to_buf
       end
       def self.to_file(filename,elf)
