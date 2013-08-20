@@ -313,7 +313,7 @@ module Elf
           expect_value "Address space has room", range_available?(@layout,addr,addr+size),true
         end
         chunk.each  do |section|
-          section.vaddr = roundup(addr + section.siz,align)
+          section.vaddr = roundup(addr,align)
           addr = section.end
         end
       end
@@ -681,21 +681,25 @@ module Elf
 
         pltrel = @file.relocations.select(&:is_dynamic).select(&:is_lazy)
         dynrel = @file.relocations.select(&:is_dynamic).select{|x| not x.is_lazy}
-        
+        rela_sections = []
+        unless dynrel.empty?
+          #All other relocations go into .rela.dyn
+          relabuf = rela_buffer(dynrel)
+          reladyn = OutputSection.new(".rela.dyn", SHT::SHT_RELA, SHF::SHF_ALLOC,nil, relabuf.num_bytes,".dynsym",0,8, relaentsize, relabuf.to_binary_s)
+          rela_sections << reladyn
+        end
         unless(pltrel.empty?)
           relabuf=rela_buffer(pltrel)
-          relaplt = OutputSection.new(".rela.plt", SHT::SHT_RELA, SHF::SHF_ALLOC, nil, relabuf.num_bytes,".dynsym",@file.dynamic.pltgot.name,32, relaentsize, relabuf.to_binary_s)
-          @layout.add relaplt
+          relaplt = OutputSection.new(".rela.plt", SHT::SHT_RELA, SHF::SHF_ALLOC, nil, relabuf.num_bytes,".dynsym",@file.dynamic.pltgot.name,8, relaentsize, relabuf.to_binary_s)
+          rela_sections << relaplt
+        end
+        @layout.add *rela_sections # They need to in this order to produce a correct ld.so
+        unless dynrel.empty?
           @dynamic << @factory.dyn.new(tag: DT::DT_PLTRELSZ, val: relabuf.num_bytes)
           @dynamic << @factory.dyn.new(tag: DT::DT_PLTREL, val: DT::DT_RELA)
           @dynamic << @factory.dyn.new(tag: DT::DT_JMPREL, val: relaplt.vaddr)
         end
-        unless dynrel.empty?
-          
-          #All other relocations go into .rela.dyn
-          relabuf = rela_buffer(dynrel)
-          reladyn = OutputSection.new(".rela.dyn", SHT::SHT_RELA, SHF::SHF_ALLOC,nil, relabuf.num_bytes,".dynsym",0,32, relaentsize, relabuf.to_binary_s)
-          @layout.add reladyn
+        begin
           @dynamic << @factory.dyn.new(tag: DT::DT_RELA, val: reladyn.vaddr)
           @dynamic << @factory.dyn.new(tag: DT::DT_RELASZ, val: reladyn.siz)     
           @dynamic << @factory.dyn.new(tag: DT::DT_RELAENT, val: relaentsize)
