@@ -88,7 +88,8 @@ module Elf
           section =  nil
           value = sym.val.to_i
         else
-          section = @bits_by_index[sym.shndx.to_i] 
+          section = @bits_by_index[sym.shndx.to_i]
+          section = ".interp" if section.name == ".interp" #HACK: this should not be the case
           if([ET::ET_EXEC, ET::ET_DYN].include? @file.filetype)
             value = sym.val.to_i - section.addr #TODO: Only if absolute.
           else 

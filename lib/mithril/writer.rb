@@ -75,11 +75,13 @@ module Elf
         #(non-nil vaddrs) go where they have to go
         # Flexible sections are added to lowest hole after section of
         # the same type
-        return if sections.empty?
+        retval = []
+        return [] if sections.empty?
         sections.each{|sect|
           sect.index = @sections.size
           expect_value "Correct size", sect.data.size, sect.siz
           @sections << sect
+          retval << sect.index
         }
         flags = sections.first.flags
         @layout_by_flags[flags] ||= RBTree.new()
@@ -101,10 +103,12 @@ module Elf
             @layout_by_flags[i.flags][i.vaddr] = i
           }
         end
+        retval
       end 
       def add_with_phdr(sections,type,flags) 
-        self.add *sections
+        x=self.add *sections
         @phdrs << [sections,type,flags]
+        x
       end
       def shstrtab(buf) # Last section written, TODO: Move to layout
         name = ".shstrtab"
@@ -386,7 +390,8 @@ module Elf
         if(@file.interp)
           interp  = BinData::Stringz.new(@file.interp)
 
-          @layout.add_with_phdr [OutputSection.new(".interp",SHT::SHT_PROGBITS, SHF::SHF_ALLOC, nil, interp.num_bytes,0,0,1,0,interp.to_binary_s)], PT::PT_INTERP, PF::PF_R
+          idx, _ =@layout.add_with_phdr [OutputSection.new(".interp",SHT::SHT_PROGBITS, SHF::SHF_ALLOC, nil, interp.num_bytes,0,0,1,0,interp.to_binary_s)], PT::PT_INTERP, PF::PF_R
+          @progbit_indices[".interp"]=idx
         end
       end
       def hashtab(table)
@@ -708,10 +713,10 @@ module Elf
       def write_to_buf #Make this memoized
         @buf.seek @factory.hdr.new.num_bytes #Leave space for header.
         #this is pretty bad
-        progbits 
+        progbits
+        interp 
         note
         dynamic
-        interp
         write_headers
       end
     end
