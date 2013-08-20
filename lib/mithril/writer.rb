@@ -71,6 +71,9 @@ module Elf
         @sections = [OutputSection.new("", SHT::SHT_NULL, 0,0,0,0,0,0,0,"")]
         @sections[0].index = 0
       end
+      def [](idx)
+        @sections[idx]
+      end
       def add(*sections)       #Ordering as follows: Fixed
         #(non-nil vaddrs) go where they have to go
         # Flexible sections are added to lowest hole after section of
@@ -205,7 +208,7 @@ module Elf
             offset = align_mod(offset,s.vaddr, PAGESIZE)     
           end
           s.off = offset
-          offset += s.data.size
+          offset += s.data.bytesize
           
         }
         idx = 0
@@ -225,7 +228,7 @@ module Elf
           pp "#{idx }#{s.name} written to offset #{old_off} to #{buf.tell}"
 
           
-          expect_value "size", s.data.size, s.siz
+          expect_value "size", s.data.bytesize, s.siz
           link_value = lambda do |name|
             if name.is_a? String
               @sections.to_enum.with_index.select {|sect,idx| sect.name == name}.first.last rescue raise RuntimeError.new("Invalid Section reference #{name}") #Index of first match TODO: check unique
@@ -389,8 +392,8 @@ module Elf
       def interp
         if(@file.interp)
           interp  = BinData::Stringz.new(@file.interp)
-
-          idx, _ =@layout.add_with_phdr [OutputSection.new(".interp",SHT::SHT_PROGBITS, SHF::SHF_ALLOC, nil, interp.num_bytes,0,0,1,0,interp.to_binary_s)], PT::PT_INTERP, PF::PF_R
+          @interp_section = OutputSection.new(".interp",SHT::SHT_PROGBITS, SHF::SHF_ALLOC, nil, interp.num_bytes,0,0,1,0,interp.to_binary_s)
+          idx, _ =@layout.add_with_phdr [@interp_section], PT::PT_INTERP, PF::PF_R
           @progbit_indices[".interp"]=idx
         end
       end
@@ -559,7 +562,9 @@ module Elf
           unless sym.section.nil?
             expect_value "valid symbol offset",  sym.sectoffset <= sym.section.size,true #Symbol can point to end of section
           end
-          s.val = (sym.section.andand.addr || 0) + sym.sectoffset #TODO: find output section
+          
+          s.val = (@layout[s.shndx.to_i].andand.vaddr || 0) + sym.sectoffset #TODO: find output section
+            
           s.siz = sym.size
           @dynsym[sym] = symtab.size
           symtab.push s

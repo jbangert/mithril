@@ -320,7 +320,7 @@ module Elf
       by_type.delete DT::DT_GNU_HASH
       
       retval.needed = []
-      by_type[DT::DT_NEEDED].each do |needed|
+      by_type[DT::DT_NEEDED].andand.each do |needed|
         retval.needed << @dynstr[needed.val]
       end
       by_type.delete DT::DT_NEEDED
