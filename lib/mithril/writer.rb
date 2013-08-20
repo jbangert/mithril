@@ -108,7 +108,8 @@ module Elf
         end
         retval
       end 
-      def add_with_phdr(sections,type,flags) 
+      def add_with_phdr(sections,type,flags)
+        raise RuntimeError.new "need one section in phdr" if sections.empty?
         x=self.add *sections
         @phdrs << [sections,type,flags]
         x
@@ -386,7 +387,7 @@ module Elf
         os= @file.notes.map {|name,note|
           OutputSection.new(name, SHT::SHT_NOTE, NOTE_FLAGS, nil, note.num_bytes,0,0,NOTE_ALIGN, NOTE_ENTSIZE,note.to_binary_s)
         }
-        @layout.add_with_phdr os, PT::PT_NOTE, PF::PF_R
+        @layout.add_with_phdr os, PT::PT_NOTE, PF::PF_R unless os.empty?
         #TODO: add phdr
       end
       def interp
@@ -406,7 +407,7 @@ module Elf
 
         table.each {|sym,idx|
           
-          expect_value "Valid symbol index",idx > 0 && idx<=table.size,true
+          expect_value "Valid symbol index", idx<table.size,true
           i = Elf::Writer::elf_hash(sym.name) % nbuckets
           if(buckets[i] == 0)
             buckets[i] = idx
@@ -540,10 +541,11 @@ module Elf
       end
       def dynsym(dynstrtab)
         symtab = BinData::Array.new(:type => @factory.sym)
-        syms = @file.symbols.select(&:is_dynamic)
+        syms = [Elf::Symbol.new("",nil,STT::STT_NOTYPE,0,STB::STB_LOCAL,0).tap{
+                |x| x.gnu_version = :local; x.semantics = 0}] + @file.symbols.select(&:is_dynamic)
         versions = versions(syms, dynstrtab)
         @dynsym = {}
-        symtab << @factory.sym.new
+        #symtab << @factory.sym.new
         syms.to_enum.with_index.each do |sym,idx|
           s = @factory.sym.new
           s.name = dynstrtab.add_string(sym.name)
