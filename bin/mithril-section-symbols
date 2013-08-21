@@ -5,3 +5,4 @@ require 'mithril/inject_symbols'
 Elf::rewrite(ARGV[0]){|file|
   Elf::Policy::inject_symbols(file)
 }
+$LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', 'lib')

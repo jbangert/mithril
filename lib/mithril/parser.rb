@@ -245,7 +245,7 @@ module Elf
           if rel_entry.sym == 0
             rel.symbol = nil
           else
-            rel.symbol = symtab[ rel_entry.sym]
+            rel.symbol = @canonical_symbol[symtab[ rel_entry.sym]] || RuntimeError.new("Symbol could not be canonicalized")
           end
           rel.addend = rel_entry.addend.to_i
           rel.is_lazy = is_jmprel
@@ -640,21 +640,35 @@ module Elf
         expect_value "_DYNAMIC symbol points to dynamic section", @file.symbols["_DYNAMIC"].sectoffset, dyn_section.vaddr.to_i
         @file.pinned_sections[".dynamic"] = {vaddr: dyn_section.vaddr.to_i, size: dyn_section.siz.to_i}
       end
-
-      (@dynsym|| []).each {|sym|
-        sym.is_dynamic = true
-        staticsym =  @file.symbols.lookup(sym.name,sym.gnu_version)
-        if !staticsym.nil? and sym.name != ""#TODO: assert that symbols
-          #are the same!
-          expect_value "Dynamic #{sym.name} value", sym.sectoffset, staticsym.sectoffset
-          expect_value "Dynamic #{sym.name} value", sym.section, staticsym.section
-          expect_value "Dynamic #{sym.name} size", sym.size,  staticsym.size
+      dyn_by_name = {}
+      @dynsym.each{|d|
+        d.is_dynamic= true
+        dyn_by_name[d.name]||=[];
+        dyn_by_name[d.name] << d
+      }
+      @canonical_symbol = {}
+      @file.symbols.each {|staticsym|
+        @canonical_symbol[staticsym] = staticsym
+        next if staticsym.name == ""
+        next if staticsym.visibility == STB::STB_LOCAL
+        dyn_by_name[staticsym.name].andand.each {|sym|
+          next if sym.sectoffset != dynsym.sectoffset
+          next if sym.section != dynsym.section
+          @canonical_symbol[dynsym] = sym
           staticsym.is_dynamic = true
           staticsym.gnu_version = sym.gnu_version
-        else
-          @file.symbols <<  sym
+          unparsed_dyn[sym] = false
+          expect_value "Dynamic #{sym.name} size", sym.size,  staticsym.size        }
+      }
+      @dynsym.each {|sym|
+        unless @canonical_symbol.include? sym
+          @canonical_symbol[sym]= sym
+          @file.symbols << sym
         end
-      }    
+      }
+#      symtab_array = @file.symbols.to_a
+#      @canonical_symbol.each_value{|x| expect_value "x",symtab_array.include?(x), true}
+
       rels_addrs = [ET::ET_EXEC, ET::ET_DYN].include? @hdr.type
       rel =  (@sect_types[SHT::SHT_RELA] || []).map {|rela| [rela.index, parse_rela(rela,rels_addrs)] }+ (@sect_types[SHT::SHT_REL] || []).map{|rel| [rela.index,parse_rel(rela,rels_addrs)]}
 
