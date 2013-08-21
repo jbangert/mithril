@@ -9,8 +9,10 @@ module Elf::Policy
         raise RuntimeError.new "section_symbols works only for ET_DYN and ET_EXEC files"
       end
     file.progbits.each{|section|
-         return if file.symbols.include? section.name
+         
       name = Elf::Policy::section_symbol_name(filename,section.name)
+      next if file.symbols.include? name
+
       sym = Elf::Symbol.new(name,section,ElfFlags::SymbolType::STT_SECTION,0,ElfFlags::SymbolBinding::STB_GLOBAL,section.size)
       sym.gnu_version = :global
       sym.hidden = false

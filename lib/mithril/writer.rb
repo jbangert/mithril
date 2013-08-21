@@ -241,7 +241,7 @@ module Elf
           buf.seek s.off
           old_off = buf.tell 
           buf.write(s.data)
-          pp "#{idx }#{s.name} written to offset #{old_off} to #{buf.tell}"
+#          pp "#{idx }#{s.name} written to offset #{old_off} to #{buf.tell}"
 
           
           expect_value "size", s.data.bytesize, s.siz
