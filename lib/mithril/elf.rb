@@ -20,6 +20,7 @@ module Elf
   ET = ElfFlags::Type
   PT = ElfFlags::PhdrType
   PF = ElfFlags::PhdrFlags
+  R = ElfFlags::Relocation
   NOTE_ALIGN = 4
   NOTE_FLAGS = SHF::SHF_ALLOC
   NOTE_ENTSIZE =0
@@ -68,7 +69,7 @@ module Elf
     end
   end
   class NoBits
-    attr_accessor :name, :addr, :flags, :align, :phdr, :phdr_flags
+    attr_accessor :name, :addr, :flags, :align, :phdr, :phdr_flags, :size
     def initialize(name,shdr)
       @name = name
       @addr = shdr.vaddr
@@ -91,9 +92,9 @@ module Elf
     def entsize
       1
     end
-    def size
-      @size
-    end
+   # def size
+   #   @size
+   # end
   end
   class GnuVersion 
     attr_accessor :file,:version,:flags, :needed

@@ -112,7 +112,7 @@ module Elf
       @unparsed_sections.delete shdr.index
       expect_value "PROGBITS link",shdr.link,0
       if shdr.type.to_i == SHT::SHT_NOBITS
-      NoBits.new(@shstrtab[shdr.name],shdr)
+      NoBits.new(@shstrtab[shdr.name],shdr.snapshot)
       else
         ProgBits.new(@shstrtab[shdr.name], shdr.snapshot,  @data.read(shdr.siz))        
       end
@@ -600,6 +600,13 @@ module Elf
         if nobit.flags & SHF::SHF_TLS != 0
           @file.gnu_tls ||= TLS.new
           @file.gnu_tls.tbss = nobit
+        else
+          pagesize = 4096
+          pagemask = 4095
+          nobit.size += pagesize - ( (nobit.size + nobit.addr.to_i) % pagesize)#HACK: This makes the BSS
+          expect_value "Nobit end alignment", (nobit.addr + nobit.size) % pagesize, 0
+          #section span a page, which it implicitly does due to the semantics of the mmap call
+          #HACK: TODO: Hardcoded pagesize
         end
       }
       @file.nobits = @nobits
@@ -633,6 +640,7 @@ module Elf
         expect_value "_DYNAMIC symbol points to dynamic section", @file.symbols["_DYNAMIC"].sectoffset, dyn_section.vaddr.to_i
         @file.pinned_sections[".dynamic"] = {vaddr: dyn_section.vaddr.to_i, size: dyn_section.siz.to_i}
       end
+
       (@dynsym|| []).each {|sym|
         sym.is_dynamic = true
         staticsym =  @file.symbols.lookup(sym.name,sym.gnu_version)

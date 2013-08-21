@@ -584,7 +584,7 @@ module Elf
           end
           
           s.val = (@layout[s.shndx.to_i].andand.vaddr || 0) + sym.sectoffset #TODO: find output section
-            
+
           s.siz = sym.size
           @dynsym[sym] = symtab.size
           symtab.push s
@@ -655,9 +655,11 @@ module Elf
         #dynstr -> STRTAB STRSZ
         #dynsym -> DT_SYMENT, D
       end # Write note, etc for the above
+      RELATIVE_RELOCS=[R::R_X86_64_RELATIVE]
       def rela_buffer(relocations)
-        BinData::Array.new(:type =>@factory.rela).new.tap{|retval|
-          relocations.each {|rel|
+        relative_rela_count = 0
+        buf = BinData::Array.new(:type =>@factory.rela).new.tap{|retval|
+          relocations.sort_by{|x| RELATIVE_RELOCS.include?(x.type) ? 0 : 1}.each_with_index {|rel,idx|
             entry = @factory.rela.new
             entry.off = @section_vaddrs[rel.section] + rel.offset
             if rel.symbol.nil?
@@ -665,11 +667,13 @@ module Elf
             else
               entry.sym = @dynsym[rel.symbol]  
             end
+            relative_rela_count +=1 if(RELATIVE_RELOCS.include? rel.type)
             entry.type = rel.type
             entry.addend = rel.addend
             retval.push entry
           }
         }
+        [buf, relative_rela_count]
       end
       
       def reladyn(dynstrtab)        
@@ -684,12 +688,13 @@ module Elf
         rela_sections = []
         unless dynrel.empty?
           #All other relocations go into .rela.dyn
-          relabuf = rela_buffer(dynrel)
+          relabuf,relacount = rela_buffer(dynrel)
           reladyn = OutputSection.new(".rela.dyn", SHT::SHT_RELA, SHF::SHF_ALLOC,nil, relabuf.num_bytes,".dynsym",0,8, relaentsize, relabuf.to_binary_s)
           rela_sections << reladyn
+          @dynamic << @factory.dyn.new(tag: DT::DT_RELACOUNT, val: relacount)
         end
         unless(pltrel.empty?)
-          relabuf=rela_buffer(pltrel)
+          relabuf,_=rela_buffer(pltrel)
           relaplt = OutputSection.new(".rela.plt", SHT::SHT_RELA, SHF::SHF_ALLOC, nil, relabuf.num_bytes,".dynsym",@file.dynamic.pltgot.name,8, relaentsize, relabuf.to_binary_s)
           rela_sections << relaplt
         end
