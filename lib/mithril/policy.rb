@@ -4,7 +4,7 @@ require 'bindata'
 module Elf
   module Policy
     def self.section_symbol_name(file_name,section_name)
-        "_elfp_#{file_name}.#{section_name}"
+        "_elfp_#{file_name}_#{section_name}"
     end
     R = ElfFlags::Relocation
     ELFP = ElfFlags::ElfPData
