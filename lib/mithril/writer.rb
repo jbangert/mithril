@@ -371,7 +371,7 @@ module Elf
         @progbit_indices = {}
         @section_vaddrs = {}
 
-        @file.pinned_sections.each {|name,pin|  @layout.pin_section(name,pin[:size],pin[:vaddr])
+        @file.pinned_sections.andand.each {|name,pin|  @layout.pin_section(name,pin[:size],pin[:vaddr])
         }
         write_to_buf
       end
