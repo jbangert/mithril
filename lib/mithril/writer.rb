@@ -558,13 +558,14 @@ module Elf
         @dynamic << @factory.dyn.new(tag: DT::DT_VERSYM, val: sect.vaddr)
       end
       def dynsym(dynstrtab)
-        symtab = BinData::Array.new(:type => @factory.sym)
+        symtab = BinData::Array.new(:type => @factory.sym) #TODO: use initial length here to save on
+        #some allocations
         syms = [Elf::Symbol.new("",nil,STT::STT_NOTYPE,0,STB::STB_LOCAL,0).tap{
                 |x| x.gnu_version = :local; x.semantics = 0}] + @file.symbols.select(&:is_dynamic)
         versions = versions(syms, dynstrtab)
         @dynsym = {}
         #symtab << @factory.sym.new
-        syms.to_enum.with_index.each do |sym,idx|
+        syms.each_with_index.each do |sym,idx|
           s = @factory.sym.new
           s.name = dynstrtab.add_string(sym.name)
           s.type = sym.type
