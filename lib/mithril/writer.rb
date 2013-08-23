@@ -387,7 +387,8 @@ module Elf
           x.flags &= ~SHF::SHF_ALLOC
           @layout.tbss_size = x.size
         }
-        (@file.progbits + @file.nobits).each do |sect|
+        bits = (@file.progbits + @file.nobits).sort {|a,b|( a.addr and b.addr ) ? a.addr <=> b.addr : ( a.addr ? -1 : 1 ) }
+        bits.each do |sect|
 
           out =  OutputSection.new(sect.name,sect.sect_type, sect.flags, sect.addr, sect.size,0,0,sect.align, sect.entsize, sect.data.string)
           #          binding.pry if sect.sect_type == SHT::SHT_INIT_ARRAY
