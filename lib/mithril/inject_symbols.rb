@@ -13,7 +13,8 @@ module Elf::Policy
       name = Elf::Policy::section_symbol_name(filename,section.name)
       next if file.symbols.include? name
 
-      sym = Elf::Symbol.new(name,section,ElfFlags::SymbolType::STT_SECTION,0,ElfFlags::SymbolBinding::STB_GLOBAL,section.size)
+      sym = Elf::Symbol.new(name,section,ElfFlags::SymbolType::STT_OBJECT,0,ElfFlags::SymbolBinding::STB_GLOBAL,section.size)  # STT_SECTION is ignored for lookup!
+#      print "Injecting #{name}"
       sym.gnu_version = :global
       sym.hidden = false
       sym.is_dynamic = true

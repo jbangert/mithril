@@ -163,9 +163,11 @@ module Elf
       end
       def write(v=true)
         @transition.write = v
+        @transition.read ||= v
       end
       def exec(v=true)
         @transition.exec = v
+        @transition.read ||= v
       end      
     end
     class StateBuilder

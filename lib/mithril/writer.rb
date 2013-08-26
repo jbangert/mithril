@@ -470,7 +470,11 @@ module Elf
           verdaux = BinData::Array.new(type: @factory.verdaux)
           verdaux << @factory.verdaux.new.tap{|x|
             x.name = dynstrtab.add_string(ver.version)
-            x.nextoff =  x.num_bytes
+            x.nextoff =  if(ver.parents.size == 0)
+                           0
+                         else
+                           x.num_bytes
+                         end
           }
           ver.parents.each_with_index {|parent,idx|
             aux = @factory.verdaux.new
