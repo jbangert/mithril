@@ -8,11 +8,9 @@ module Elf::Policy
       else 
         raise RuntimeError.new "section_symbols works only for ET_DYN and ET_EXEC files"
       end
-    file.progbits.each{|section|
-         
+    file.progbits.each{|section|         
       name = Elf::Policy::section_symbol_name(filename,section.name)
       next if file.symbols.include? name
-
       sym = Elf::Symbol.new(name,section,ElfFlags::SymbolType::STT_OBJECT,0,ElfFlags::SymbolBinding::STB_GLOBAL,section.size)  # STT_SECTION is ignored for lookup!
 #      print "Injecting #{name}"
       sym.gnu_version = :global

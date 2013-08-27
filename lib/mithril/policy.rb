@@ -61,6 +61,22 @@ module Elf
       def resolve_reference(elffile, relocations,offset, ref)
         if(ref.is_a? Integer)
           ref.to_i
+        elsif(ref == "_dl_runtime_resolve") #HACK:HACK:HACK: I couldn't hack ld.so to fix this, so
+          #here comes a nasty hack
+          #note that the address of _dl_runtime_resolve is 16 bytes into PLT.GOT
+          if !elffile.symbols.include? "_elfp_hidden_trampolineaddr"
+            pltgot = elffile.dynamic.pltgot or raise RuntimeError.new "No plt.got for _dl_runtime_resolve hack"
+            elffile.symbols << Elf::Symbol.new("_elfp_hidden_trampolineaddr", pltgot,STT::STT_OBJECT,16, STB::STB_LOCAL,8)            
+          end
+          symb = elffile.symbols["_elfp_hidden_trampolineaddr"]
+          relocations << Elf::Relocation.new.tap{|x|
+            x.type = R::R_X86_64_COPY
+            x.offset = offset
+            x.symbol = symb
+            x.is_dynamic = true
+            x.addend = 0
+          }
+          0xDEADBEEF
         else
           raise RuntimeError.new "Symbol #{ref} not found" unless elffile.symbols.include? ref          
           relocations << Elf::Relocation.new.tap{|x|
@@ -79,7 +95,7 @@ module Elf
         else
           raise RuntimeError.new "Symbol #{ref} not found" unless elffile.symbols.include? ref          
           relocations << Elf::Relocation.new.tap{|x|
-            x.type = R::R_X86_64_64
+            x.type = R::R_X86_64_SIZE64
             x.offset = offset
             x.symbol = elffile.symbols[ref]
             x.is_dynamic = true
@@ -91,6 +107,7 @@ module Elf
       def write_amd64(elffile)
         factory = ElfStructFactory.instance(:little,64)
         @imported_symbols.each_key {|symbol|
+          next if elffile.symbols.include? symbol
           elffile.symbols << Elf::Symbol.new(symbol,nil,Elf::STT::STT_SECTION, 0, Elf::STB::STB_GLOBAL, 0).tap {|x|
             x.semantics = Elf::SHN::SHN_UNDEF
           }
@@ -102,6 +119,7 @@ module Elf
         states = states()
         @start = states.first unless states.include? @start
         #These have to be filled in the order in which they are written
+        #FIXME: Make these aware of double transitions to the same range/ state
         states.each_with_index do |state,index|
           id = index + 2
           id = 1 if @start == state
@@ -110,6 +128,7 @@ module Elf
             x.stackid = 0 
           }
           state_ids[state] = id
+          print "State #{state} #{id}\n"
         end
         tag_ids[:default] = 0 
         @tags.each_with_index do |(name,ranges),index|
@@ -130,6 +149,7 @@ module Elf
               end
             }
           end
+          print "Tag #{name} #{index + 1} \n"
         end
         self.calls.each do |call|
           out.calls << factory.elfp_call.new.tap {|x|
@@ -148,7 +168,7 @@ module Elf
             x.type |= ELFP::ELFP_RW_READ if data.read
             x.type |= ELFP::ELFP_RW_WRITE if data.write
             x.type |= ELFP::ELFP_RW_EXEC if data.exec
-            raise RuntimeError "Unknown tag #{data.tag}" unless tag_ids.include? data.tag
+            raise RuntimeError.new "Unknown tag #{data.tag}" unless tag_ids.include? data.tag
             x.tag =   tag_ids[data.tag]
           }
         end
@@ -175,9 +195,7 @@ module Elf
       end
     end
     module BuilderHelper
-      def section(name,file_name="")
-        Elf::Policy.section_symbol_name(file_name,name).tap{|x| @policy.imported_symbols[x] = true}  
-      end
+     
     end
     class TagBuilder
       include BuilderHelper
@@ -185,6 +203,10 @@ module Elf
       def initialize(pol)
         @policy = pol
         @ranges = []
+      end
+      def section(name,file_name="")
+        sym = Elf::Policy.section_symbol_name(file_name,name).tap{|x| @policy.imported_symbols[x] = true}
+        range(sym)
       end
       def range(low,high=nil)
         @ranges << MemoryRange.new(low,high)
@@ -229,7 +251,9 @@ module Elf
         raise RuntimeError.new "Call has to have a destination" if @from == @to 
         @policy << Call.new(@from,@to, symbol, parambytes, returnbytes)
       end
-
+      def call_noreturn(symbol,parambytes=0)
+        call(symbol, parambytes,-1)
+      end
       def mem(tag, &block)
         d = Data.new(@from,@to,tag)
         DataBuilder.new(d).instance_eval(&block)
@@ -246,6 +270,12 @@ module Elf
       end
       def write(tag)
         mem(tag){
+          write
+        }
+      end
+      def readwrite(tag)
+        mem(tag){
+          read
           write
         }
       end

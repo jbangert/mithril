@@ -4,5 +4,9 @@ require 'mithril/inject_symbols'
 
 Elf::rewrite(ARGV[0]){|file|
   Elf::Policy::inject_symbols(file)
+ # if(file.symbols.include? "_dl_runtime_resolve")
+ #   print "detected ld.so, making _dl_runtime_resolve public"
+ #   file.symbols["_dl_runtime_resolve"].is_dynamic = true
+ # end
 }
 $LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', 'lib')
