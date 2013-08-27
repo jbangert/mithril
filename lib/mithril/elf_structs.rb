@@ -216,8 +216,9 @@ module ElfStructs
 =end
   #ELFP old
   def elfp_header
-    uint32 :chunkcount, value: lambda {states.size + calls.size + data.size}
+    uint32 :chunkcount, value: lambda {states.size + tags.size+ calls.size + data.size}
     array :states, type: @factory.elfp_state
+    array :tags, type: @factory.elfp_tag
     array :calls, type: @factory.elfp_call
     array :data, type: @factory.elfp_data
   end
@@ -236,13 +237,18 @@ module ElfStructs
   end
   def elfp_data
     uint32 :chunktype, value: 3
-    uint64 :low
-    uint64 :high
     uint32 :from
     uint32 :to
+    uint64 :tag
     uint32 :type
   end
-  ELF_OBJECTS =  [:sym, :rela, :rel, :dyn, :phdr, :shdr, :hdr, :note, :vernaux, :verneed, :verdef, :verdaux, :versym, :elfp_state, :elfp_call, :elfp_data, :elfp_header]
+  def elfp_tag
+    uint32 :chunktype, value:4
+    uint64 :tag
+    uint64 :addr
+    uint64 :siz
+  end
+  ELF_OBJECTS =  [:sym, :rela, :rel, :dyn, :phdr, :shdr, :hdr, :note, :vernaux, :verneed, :verdef, :verdaux, :versym, :elfp_state, :elfp_call, :elfp_data, :elfp_tag, :elfp_header]
   Split = {
     phdr: {
       32 => :phdr32,

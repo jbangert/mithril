@@ -22,15 +22,20 @@ module Elf
       end
     end
     class Data < Transition
-      attr_accessor :low
-      attr_accessor :high
+      attr_accessor :tag
       attr_accessor :read,:write, :exec 
-      def initialize(from,to, low,high , read=false ,write=false,exec=false)
-        @from, @to, @low, @high, @read,@write,@exec = from,to, low,high,read,write,exec
+      def initialize(from,to,tag , read=false ,write=false,exec=false)
+        @from, @to, @tag, @read,@write,@exec = from,to,tag,read,write,exec
+      end
+    end
+    class MemoryRange
+      attr_accessor  :low, :high
+      def initialize(from,to)
+        @low,@high = from,to
       end
     end
     class Policy
-      attr_accessor :data, :calls, :start
+      attr_accessor :data, :calls, :start, :tags
       attr_accessor :imported_symbols
       def states
         t = data + calls
@@ -50,10 +55,26 @@ module Elf
       def initialize
         @data=[]
         @calls=[]
+        @tags = {}
         @imported_symbols = {}
       end
       def resolve_reference(elffile, relocations,offset, ref)
         if(ref.is_a? Integer)
+          ref.to_i
+        else
+          raise RuntimeError.new "Symbol #{ref} not found" unless elffile.symbols.include? ref          
+          relocations << Elf::Relocation.new.tap{|x|
+            x.type = R::R_X86_64_64
+            x.offset = offset
+            x.symbol = elffile.symbols[ref]
+            x.is_dynamic = true
+            x.addend = 0
+          }
+          2**64-1
+        end
+      end
+      def resolve_size(elffile,relocations, offset, ref)
+          if(ref.is_a? Integer)
           ref.to_i
         else
           raise RuntimeError.new "Symbol #{ref} not found" unless elffile.symbols.include? ref          
@@ -76,6 +97,7 @@ module Elf
         }
         out = factory.elfp_header.new()
         state_ids = {}
+        tag_ids = {}
         relocations = []
         states = states()
         @start = states.first unless states.include? @start
@@ -88,7 +110,27 @@ module Elf
             x.stackid = 0 
           }
           state_ids[state] = id
-        end        
+        end
+        tag_ids[:default] = 0 
+        @tags.each_with_index do |(name,ranges),index|
+          tag_ids[name] = index+1
+          ranges.each do |data|
+            out.tags << factory.elfp_tag.new.tap {|x|
+              x.tag = index + 1
+              x.addr = 0
+              x.siz = 0
+            }
+            out.tags.last.tap {|x|
+              x.addr  = resolve_reference(elffile,relocations,x.addr.offset,data.low)
+              if data.high.nil?
+                x.siz = resolve_size(elffile,relocations,x.siz.offset,data.low)
+              else
+                pp "Warning, emitting SIZE symbol with value  #{ data.high.to_i rescue data.high.name}"
+                x.siz = resolve_reference(elffile,relocations,x.siz.offset,data.high)
+              end
+            }
+          end
+        end
         self.calls.each do |call|
           out.calls << factory.elfp_call.new.tap {|x|
             x.from = state_ids[call.from]
@@ -106,24 +148,8 @@ module Elf
             x.type |= ELFP::ELFP_RW_READ if data.read
             x.type |= ELFP::ELFP_RW_WRITE if data.write
             x.type |= ELFP::ELFP_RW_EXEC if data.exec
-          }
-          out.data.last.tap {|x|
-            x.low = resolve_reference(elffile,relocations,x.low.offset,data.low)
-            if(data.high.nil?)
-              raise ArgumentError.new "Need to specify a range when using fixed addresses in data transition #{data}" if data.high.is_a? Numeric
-              x.high = 0 # 2**64-1
-              x.type|= ELFP::ELFP_RW_SIZE
-              relocations << Elf::Relocation.new.tap{|rel|
-                rel.type = R::R_X86_64_SIZE64
-                rel.offset = x.high.offset
-                raise RuntimeError.new "Symbol #{data.low} not found" unless elffile.symbols.include? data.low    
-                rel.symbol = elffile.symbols[data.low]
-                rel.addend = 0
-                rel.is_dynamic = true
-              }
-            else
-              x.high = resolve_reference(elffile, relocations,x.high.offset, data.high)
-            end            
+            raise RuntimeError "Unknown tag #{data.tag}" unless tag_ids.include? data.tag
+            x.tag =   tag_ids[data.tag]
           }
         end
         out = Elf::ProgBits.new(".elfbac",nil,out.to_binary_s)
@@ -151,6 +177,20 @@ module Elf
     module BuilderHelper
       def section(name,file_name="")
         Elf::Policy.section_symbol_name(file_name,name).tap{|x| @policy.imported_symbols[x] = true}  
+      end
+    end
+    class TagBuilder
+      include BuilderHelper
+      attr_accessor :ranges
+      def initialize(pol)
+        @policy = pol
+        @ranges = []
+      end
+      def range(low,high=nil)
+        @ranges << MemoryRange.new(low,high)
+      end
+      def symbol(sym)
+        range(sym)
       end
     end
     class DataBuilder
@@ -189,22 +229,23 @@ module Elf
         raise RuntimeError.new "Call has to have a destination" if @from == @to 
         @policy << Call.new(@from,@to, symbol, parambytes, returnbytes)
       end
-      def range(low,high=nil, &block)
-        d = Data.new(@from,@to,low,high)
+
+      def mem(tag, &block)
+        d = Data.new(@from,@to,tag)
         DataBuilder.new(d).instance_eval(&block)
         @policy << d
       end
-      def exec(low,high=nil)
-        range(low,high){
+      def exec(tag)
+        mem(tag){
           exec        }
       end
-      def read(low,high=nil)
-        range(low,high){
+      def read(tag)
+        mem(tag){
           read
         }
       end
-      def write(low,high=nil)
-        range(low,high){
+      def write(tag)
+        mem(tag){
           write
         }
       end
@@ -225,7 +266,13 @@ module Elf
       end
       def state(name, &block)
         StateBuilder.new(name,name,@policy).instance_eval(&block)
-      end      
+      end
+      def tag(name, &block)
+        policy.tags[name] ||= []
+        x =TagBuilder.new(@policy)
+        x.instance_eval(&block)
+        policy.tags[name] += x.ranges
+      end 
       def call_noreturn(from,to,symbol, parambytes=0)
         @policy << Call.new(from,to, symbol, parambytes,-1)        
       end
