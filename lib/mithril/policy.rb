@@ -195,7 +195,9 @@ module Elf
       end
     end
     module BuilderHelper
-     
+      def section_start(name, file_name="")
+        Elf::Policy.section_symbol_name(file_name,name).tap{|x| @policy.imported_symbols[x] = true}
+      end
     end
     class TagBuilder
       include BuilderHelper
@@ -205,8 +207,7 @@ module Elf
         @ranges = []
       end
       def section(name,file_name="")
-        sym = Elf::Policy.section_symbol_name(file_name,name).tap{|x| @policy.imported_symbols[x] = true}
-        range(sym)
+        range(section_start(name,file_name))
       end
       def range(low,high=nil)
         @ranges << MemoryRange.new(low,high)
