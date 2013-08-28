@@ -107,7 +107,9 @@ module Elf
       def write_amd64(elffile)
         factory = ElfStructFactory.instance(:little,64)
         @imported_symbols.each_key {|symbol|
-          next if elffile.symbols.include? symbol
+          if elffile.symbols.include?(symbol)
+            elffile.symbols[symbol].is_dynamic = true
+          end
           elffile.symbols << Elf::Symbol.new(symbol,nil,Elf::STT::STT_SECTION, 0, Elf::STB::STB_GLOBAL, 0).tap {|x|
             x.semantics = Elf::SHN::SHN_UNDEF
           }
