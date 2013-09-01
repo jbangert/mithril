@@ -156,7 +156,10 @@ module Elf
       if(version.nil?)
         @named_symbols[name].andand {|x|
           if(x.length > 1)
-            raise RuntimeError.new("Multiple definitions of symbol #{name}")
+            x = x.select{|i| i.gnu_version != :local and i.bind != STB::STB_LOCAL}
+            if(x.length > 1)
+              raise RuntimeError.new("Multiple definitions of symbol #{name}")
+            end
           end
           x.first
         }

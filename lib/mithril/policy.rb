@@ -109,10 +109,11 @@ module Elf
         @imported_symbols.each_key {|symbol|
           if elffile.symbols.include?(symbol)
             elffile.symbols[symbol].is_dynamic = true
+          else
+            elffile.symbols << Elf::Symbol.new(symbol,nil,Elf::STT::STT_OBJECT, 0, Elf::STB::STB_GLOBAL, 0).tap {|x|
+              x.semantics = Elf::SHN::SHN_UNDEF
+            }
           end
-          elffile.symbols << Elf::Symbol.new(symbol,nil,Elf::STT::STT_SECTION, 0, Elf::STB::STB_GLOBAL, 0).tap {|x|
-            x.semantics = Elf::SHN::SHN_UNDEF
-          }
         }
         out = factory.elfp_header.new()
         state_ids = {}
