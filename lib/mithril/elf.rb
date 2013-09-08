@@ -42,7 +42,7 @@ module Elf
     attr_accessor :data,:name, :addr, :flags, :align, :entsize
     attr_accessor :phdr, :phdr_flags # Makes a PHDR for this section
     attr_accessor :sect_type
-    def initialize(name,shdr,data)
+    def initialize(name,shdr = nil,data = "")
       @data = StringIO.new(data)
       @name = name
       if shdr.nil?
@@ -115,6 +115,9 @@ module Elf
     end
     def undefined?
       semantics == SHN::SHN_UNDEF
+    end
+    def weak?
+      bind == STB::STB_WEAK
     end
     def initialize(name,section,type,sectoffset, bind,size)
       @name,@section, @type, @sectoffset, @bind, @size = name.to_s,section,type,sectoffset, bind,size
@@ -197,9 +200,18 @@ module Elf
     attr_accessor :filetype, :machine, :entry, :flags, :version
     attr_accessor :progbits, :nobits, :dynamic,  :relocations
     attr_accessor :gnu_tls
-    attr_accessor :symbols# , :relocated_symbols
+    attr_accessor :symbols#, :relocated_symbols
     attr_accessor :notes, :bits, :endian, :interp, :extra_phdrs
     attr_accessor :pinned_sections #Some binaries rely on specific address layouts (esp. ld.so)
+    def initialize
+      @dynamic = Dynamic.new
+      @relocations = []
+      @progbits = []
+      @nobits = []
+      @pinned_sections = {}
+      @notes = []
+      @symbols = SymbolTable.new
+    end
   end
 end
 

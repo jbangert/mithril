@@ -1,0 +1,56 @@
+#!/usr/bin/env ruby
+require 'mithril'
+module Elf
+  def newfile
+    ElfFile.new.tap {|x|
+      x.filetype = ElfFlags::Type::ET_EXEC
+      x.machine = ElfFlags::Machine 
+      x.version = ElfFlags::EV_CURRENT
+      x.flags = 0
+      x.bits = 64
+      x.endian  = :little 
+      x.interp =  "/lib64/ld-linux-x86-64.so.2"
+    }
+  end
+  def linkfiles(outfile, infiles)
+    progbits = {}
+    symbols = {}
+    sect_map = {}
+    sect_offsets = {}
+    symbols = {}
+    infiles.each {|infile|
+      #link actual data
+      (infile.progbit + infile.nobits).each {|inbit|
+        outbit = (progbits[inbit.name] ||= Elf::ProgBit.new(inbit.name))
+        sect_offsets[inbit] = outbit.data.tell
+        sect_map[inbit] = outbit
+        outbit.data.write inbit.data.to_s
+      }
+      # Link together symbol table. Note we do not support versioning in the poc
+      infile.symbols.each {|symbol|
+        next if symbol.name.empty?
+        next unless [Elf::STT::STT_OBJECT, Elf::STT::STT_FUNC, Elf::STT::STT_COMMON].include? symbol.type
+
+        if (symbols.include? symbol.name)
+          next if symbol.weak?
+          raise ArgumentError.new "Duplicate definition of symbol #{symbol.name}"  unless symbols[symbol.name].weak?  or symbols[symbol.name].undefined?  
+        end
+        symbols[symbol.name] = symbol.clone.tap{|outsym|
+          outsym.sectoffset += sectoffset[outsym.section]
+          outsym.section = sect_map[outsym.section]
+        }        
+      }
+      outfile.relocations.each {|rela|
+        outfile.relocations << rela.clone.tap{|x|
+          x.offset += offset
+          x.section = sect_map[x.section]
+          name = x.symbol.name
+          x.symbol = symbols[name]
+          raise ArgumentError.new "Undefined symbol #{name}" if(x.symbol.nil?)
+        }
+      }
+    }
+   #We have to push relocations 
+  end
+end
+
