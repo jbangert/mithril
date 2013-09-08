@@ -557,11 +557,12 @@ module Elf
       @file.entry = @hdr.entry
       expect_value "ELF version",@file.version, ElfFlags::Version::EV_CURRENT
       #pp hdr.snapshot
-
-      expect_value "PHT size", @factory.phdr.new.num_bytes, @hdr.phentsize
-      @data.seek @hdr.phoff
-      @phdrs = BinData::Array.new(:type => @factory.phdr, :initial_length => @hdr.phnum)
-      @phdrs.read(@data)
+      if @hdr.phnum != 0
+        expect_value "PHT size", @factory.phdr.new.num_bytes, @hdr.phentsize
+        @data.seek @hdr.phoff
+        @phdrs = BinData::Array.new(:type => @factory.phdr, :initial_length => @hdr.phnum)
+        @phdrs.read(@data)
+      end
 
 
       @data.seek @hdr.shoff

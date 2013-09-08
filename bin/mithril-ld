@@ -1,18 +1,18 @@
 #!/usr/bin/env ruby
 require 'mithril'
 module Elf
-  def newfile
+  def self.newfile
     ElfFile.new.tap {|x|
       x.filetype = ElfFlags::Type::ET_EXEC
-      x.machine = ElfFlags::Machine 
-      x.version = ElfFlags::EV_CURRENT
+      x.machine = ElfFlags::Machine::EM_X86_64 
+      x.version = ElfFlags::Version::EV_CURRENT
       x.flags = 0
       x.bits = 64
       x.endian  = :little 
       x.interp =  "/lib64/ld-linux-x86-64.so.2"
     }
   end
-  def linkfiles(outfile, infiles)
+  def self.linkfiles(outfile, infiles)
     progbits = {}
     symbols = {}
     sect_map = {}
@@ -40,7 +40,7 @@ module Elf
           outsym.section = sect_map[outsym.section]
         }        
       }
-      outfile.relocations.each {|rela|
+      infiles.map(&:relocations).flatten.each {|rela|
         outfile.relocations << rela.clone.tap{|x|
           x.offset += offset
           x.section = sect_map[x.section]
@@ -50,7 +50,9 @@ module Elf
         }
       }
     }
+    outfile
    #We have to push relocations 
   end
 end
-
+file = Elf::linkfiles(Elf::newfile, ARGV[1..-1].map{|x| Elf::Parser::from_file(x)})
+Elf::Writer.to_file(ARGV[0], file)
