@@ -53,6 +53,7 @@ module Elf
         RuntimeError.new  "Invalid ELF endianness #{ident.id_data}"
       end
       @versions = {}
+      @reladyn_indices = []
       @factory = ElfStructFactory.instance(@file.endian,@file.bits)
       parse_with_factory()
     end
@@ -293,7 +294,6 @@ module Elf
         end
       end
 
-      @reladyn_indices =[]
       expect_value "DT_NULL", dynamic.last, @factory.dyn.new()
 
       by_type.delete DT::DT_NULL
@@ -562,8 +562,9 @@ module Elf
         @data.seek @hdr.phoff
         @phdrs = BinData::Array.new(:type => @factory.phdr, :initial_length => @hdr.phnum)
         @phdrs.read(@data)
+      else
+        @phdrs =[]
       end
-
 
       @data.seek @hdr.shoff
       @shdrs = BinData::Array.new(:type => @factory.shdr, :initial_length => @hdr.shnum)
@@ -619,10 +620,11 @@ module Elf
                                               })
 
       parse_phdrs()
-      @file.dynamic = unique_section(@sect_types, ElfFlags::SectionType::SHT_DYNAMIC).andand{|dynamic| parse_dynamic dynamic}
+
+      @file.dynamic = unique_section(@sect_types, ElfFlags::SectionType::SHT_DYNAMIC).andand{|dynamic| parse_dynamic dynamic} || Elf::Dynamic.new
       
-      @symtab = unique_section(@sect_types, ElfFlags::SectionType::SHT_SYMTAB).andand {|symtab| parse_symtable symtab, safe_strtab(symtab.link) }
-      @dynsym = unique_section(@sect_types, ElfFlags::SectionType::SHT_DYNSYM).andand {|symtab| parse_symtable symtab, safe_strtab(symtab.link) }
+      @symtab = unique_section(@sect_types, ElfFlags::SectionType::SHT_SYMTAB).andand {|symtab| parse_symtable symtab, safe_strtab(symtab.link) } || []
+      @dynsym = unique_section(@sect_types, ElfFlags::SectionType::SHT_DYNSYM).andand {|symtab| parse_symtable symtab, safe_strtab(symtab.link) } || []
 
       unique_section(@sect_types,ElfFlags::SectionType::SHT_GNU_VERNEED).andand{|verneed| parse_verneed verneed}
       unique_section(@sect_types,ElfFlags::SectionType::SHT_GNU_VERDEF).andand{|verdef| parse_verdef verdef}
