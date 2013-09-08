@@ -21,38 +21,39 @@ module Elf
     symbols = {}
     infiles.each {|infile|
       #link actual data
-      (infile.progbit + infile.nobits).each {|inbit|
-        outbit = (progbits[inbit.name] ||= Elf::ProgBit.new(inbit.name))
+      (infile.progbits + infile.nobits).each {|inbit|
+        outbit = (progbits[inbit.name] ||= Elf::ProgBits.new(inbit.name))
         sect_offsets[inbit] = outbit.data.tell
         sect_map[inbit] = outbit
-        outbit.data.write inbit.data.to_s
+        outbit.data.write inbit.data.to_s #TODO: Handle align
       }
       # Link together symbol table. Note we do not support versioning in the poc
       infile.symbols.each {|symbol|
         next if symbol.name.empty?
-        next unless [Elf::STT::STT_OBJECT, Elf::STT::STT_FUNC, Elf::STT::STT_COMMON].include? symbol.type
+        next unless [Elf::STT::STT_OBJECT, Elf::STT::STT_FUNC, Elf::STT::STT_COMMON, Elf::STT::STT_NOTYPE].include? symbol.type
 
         if (symbols.include? symbol.name)
-          next if symbol.weak?
+          next if symbol.weak? or symbol.undefined?
           raise ArgumentError.new "Duplicate definition of symbol #{symbol.name}"  unless symbols[symbol.name].weak?  or symbols[symbol.name].undefined?  
         end
         symbols[symbol.name] = symbol.clone.tap{|outsym|
-          outsym.sectoffset += sectoffset[outsym.section]
+          outsym.sectoffset += sect_offsets[outsym.section]
           outsym.section = sect_map[outsym.section]
         }        
       }
-      infiles.map(&:relocations).flatten.each {|rela|
-        outfile.relocations << rela.clone.tap{|x|
-          x.offset += offset
-          x.section = sect_map[x.section]
-          name = x.symbol.name
-          x.symbol = symbols[name]
-          raise ArgumentError.new "Undefined symbol #{name}" if(x.symbol.nil?)
-        }
+    }
+    infiles.map(&:relocations).flatten.each {|rela|
+      outfile.relocations << rela.clone.tap{|x|
+        x.offset += sect_offsets[x.section]
+        x.section = sect_map[x.section]
+        name = x.symbol.name
+        x.symbol = symbols[name]
+        raise ArgumentError.new "Undefined symbol #{name}" if(x.symbol.nil?)
       }
     }
+    
     outfile
-   #We have to push relocations 
+    #We have to push relocations 
   end
 end
 file = Elf::linkfiles(Elf::newfile, ARGV[1..-1].map{|x| Elf::Parser::from_file(x)})

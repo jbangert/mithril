@@ -1,7 +1,9 @@
 require_relative 'elf'
 module Elf
   module Writer
-
+    def self.to_file(filename,elf)
+      Elf::Writer::Writer.to_file(filename,elf)
+    end
     def self.elf_hash(value)      
       h=0 
       g=0

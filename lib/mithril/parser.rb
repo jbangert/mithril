@@ -113,7 +113,7 @@ module Elf
       @unparsed_sections.delete shdr.index
       expect_value "PROGBITS link",shdr.link,0
       if shdr.type.to_i == SHT::SHT_NOBITS
-      NoBits.new(@shstrtab[shdr.name],shdr.snapshot)
+        NoBits.new(@shstrtab[shdr.name],shdr.snapshot)
       else
         ProgBits.new(@shstrtab[shdr.name], shdr.snapshot,  @data.read(shdr.siz))        
       end
