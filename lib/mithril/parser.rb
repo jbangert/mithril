@@ -531,7 +531,7 @@ module Elf
         #own section. Instead just check what is at that vaddr
         interp_section = @progbits.select {|x| x.addr  == pt_interp.vaddr.to_i}.first
         expect_value ".interp section", interp_section.nil?, false
-        @file.interp = interp_section.data.read
+        @file.interp = BinData::Stringz.read(interp_section.data.read).snapshot
         @progbits.delete interp_section
       end
       process_unique.call(PT::PT_DYNAMIC).andand do |pt_dynamic|

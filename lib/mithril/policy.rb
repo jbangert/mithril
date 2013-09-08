@@ -38,13 +38,20 @@ module Elf
       attr_accessor :data, :calls, :start, :tags
       attr_accessor :imported_symbols
       def states
-        t = data + calls
-        (t.map(&:from) + t.map(&:to)).uniq 
+        t = data.keys + data.values.map(&:keys).flatten + calls.map(&:from) +
+          calls.map(&:to)
+        t.uniq
       end
       def <<(*transitions)
         transitions.each do |t|
           if t.is_a? Data
-            data << t
+            x= data
+            x[t.from] ||= {}
+            x[t.from][t.to] ||= {}
+            x[t.from][t.to][t.tag] ||= t
+            x[t.from][t.to][t.tag].read ||= t.read
+            x[t.from][t.to][t.tag].write ||= t.write
+            x[t.from][t.to][t.tag].exec ||= t.exec            
           elsif t.is_a? Call
             calls << t
           else
@@ -53,8 +60,9 @@ module Elf
         end
       end
       def initialize
-        @data=[]
+        @data={}
         @calls=[]
+        @states ={}
         @tags = {}
         @imported_symbols = {}
       end
@@ -163,7 +171,7 @@ module Elf
           }
           out.calls.last.off = resolve_reference(elffile,relocations,out.calls.last.off.offset, call.symbol)
         end
-        self.data.each do |data|
+        self.data.values.map(&:values).flatten.map(&:values).flatten.each do |data|
           out.data << factory.elfp_data.new.tap {|x|
             x.from = state_ids[data.from]
             x.to = state_ids[data.to]
