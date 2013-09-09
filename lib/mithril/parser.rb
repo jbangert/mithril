@@ -246,7 +246,7 @@ module Elf
           if rel_entry.sym == 0
             rel.symbol = nil
           else
-            rel.symbol = @canonical_symbol[symtab[ rel_entry.sym]] || RuntimeError.new("Symbol could not be canonicalized")
+            rel.symbol = @canonical_symbol[symtab[ rel_entry.sym]] or raise(RuntimeError.new("Symbol could not be canonicalized"))
           end
           rel.addend = rel_entry.addend.to_i
           rel.is_lazy = is_jmprel

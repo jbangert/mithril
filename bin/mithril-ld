@@ -40,8 +40,10 @@ module Elf
           raise ArgumentError.new "Duplicate definition of symbol #{symbol.name}"  unless symbols[symbol.name].weak?  or symbols[symbol.name].undefined?  
         end
         symbols[symbol.name] = symbol.clone.tap{|outsym|
-          outsym.sectoffset += sect_offsets[outsym.section]
-          outsym.section = sect_map[outsym.section]
+          unless outsym.undefined?
+            outsym.sectoffset += sect_offsets[outsym.section]
+            outsym.section = sect_map[outsym.section]
+          end
         }        
       }
     }
