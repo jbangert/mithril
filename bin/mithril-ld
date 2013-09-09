@@ -23,9 +23,12 @@ module Elf
       #link actual data
       (infile.progbits + infile.nobits).each {|inbit|
         outbit = (progbits[inbit.name] ||= Elf::ProgBits.new(inbit.name))
+        outbit.flags |= inbit.flags
+        outbit.align = [inbit.align, outbit.align].max
+        outbit.sect_type = inbit.sect_type
         sect_offsets[inbit] = outbit.data.tell
         sect_map[inbit] = outbit
-        outbit.data.write inbit.data.to_s #TODO: Handle align
+        outbit.data.write inbit.data.read #TODO: Handle align
       }
       # Link together symbol table. Note we do not support versioning in the poc
       infile.symbols.each {|symbol|
@@ -42,19 +45,29 @@ module Elf
         }        
       }
     }
+    progbits.values.each {|progbit| outfile.progbits << progbit   }
+    symbols.values.each {|sym| outfile.symbols << sym}
+    
     infiles.map(&:relocations).flatten.each {|rela|
       outfile.relocations << rela.clone.tap{|x|
         x.offset += sect_offsets[x.section]
         x.section = sect_map[x.section]
         name = x.symbol.name
         x.symbol = symbols[name]
+        x.is_dynamic = true
         raise ArgumentError.new "Undefined symbol #{name}" if(x.symbol.nil?)
       }
-    }
+    } #TODO: Produce dynsym
+    raise "Undefined entry point _start " unless symbols.include? "_start"
+    entry = symbols["_start"]
+    entry.section.addr = 0x40000
+    outfile.entry = entry.sectoffset + entry.section.addr
     
     outfile
-    #We have to push relocations 
+
   end
 end
 file = Elf::linkfiles(Elf::newfile, ARGV[1..-1].map{|x| Elf::Parser::from_file(x)})
+
 Elf::Writer.to_file(ARGV[0], file)
+`chmod +x '#{ARGV[0]}'`

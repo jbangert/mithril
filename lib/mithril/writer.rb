@@ -302,6 +302,13 @@ module Elf
         write_phdrs(buf,filehdr,load)
       end
       private
+      def max_address()
+        unless @layout.last.nil?
+          @layout.last[1].end
+        else
+          0x40000 # TODO: Make start_address a parameter
+        end
+      end
       def allocate_sections(chunk)
         return unless chunk.first.flags & SHF::SHF_ALLOC != 0
         align = chunk.max_by{ |x| x.align}.align #Should technically be the
@@ -311,8 +318,8 @@ module Elf
         size = chunk.reduce(0) {|i,x| i+roundup(x.siz,align)}
         addr = @layout_by_flags[chunk.first.flags].last.andand { |x| roundup(x[1].end,align)}
         if(addr.nil? or !range_available?(@layout,addr,addr+size))
-          addr = roundup(@layout.last[1].end,align)
-          expect_value "Address space has room", range_available?(@layout,addr,addr+size),true
+          addr = roundup(max_address,align)
+          expect_value "Address space has room", range_available?(@layout,addr,addr+size),true #TODO: This can actually overflow! Properly do arithemetic mod 2**64 
         end
         chunk.each  do |section|
           section.vaddr = roundup(addr,align)
@@ -548,6 +555,7 @@ module Elf
         @versions
       end
       def versym(versions,symbols)
+        return if versions.empty?
         data = BinData::Array.new(type: @factory.versym)
         symbols.each{|sym|
           veridx = case sym.gnu_version
@@ -707,12 +715,12 @@ module Elf
           rela_sections << relaplt
         end
         @layout.add *rela_sections # They need to in this order to produce a correct ld.so
-        unless dynrel.empty?
+        unless pltrel.empty?
           @dynamic << @factory.dyn.new(tag: DT::DT_PLTRELSZ, val: relabuf.num_bytes)
           @dynamic << @factory.dyn.new(tag: DT::DT_PLTREL, val: DT::DT_RELA)
           @dynamic << @factory.dyn.new(tag: DT::DT_JMPREL, val: relaplt.vaddr)
         end
-        begin
+        unless dynrel.empty?
           @dynamic << @factory.dyn.new(tag: DT::DT_RELA, val: reladyn.vaddr)
           @dynamic << @factory.dyn.new(tag: DT::DT_RELASZ, val: reladyn.siz)     
           @dynamic << @factory.dyn.new(tag: DT::DT_RELAENT, val: relaentsize)

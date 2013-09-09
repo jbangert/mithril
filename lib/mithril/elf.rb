@@ -37,6 +37,9 @@ module Elf
 
     #TODO: I feel this should always be the SONAME, warn otherwise
     attr_accessor :flags, :flags1
+    def initialize
+      @needed = []
+    end
   end
   class ProgBits
     attr_accessor :data,:name, :addr, :flags, :align, :entsize
