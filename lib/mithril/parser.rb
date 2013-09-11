@@ -634,7 +634,7 @@ module Elf
       }
       #TODO: Parse versions in static symbols
       @file.symbols = SymbolTable.new.tap{|h| (@symtab || []).each{|sym|
-          h<< sym if sym.name != "" #TODO: Represent nameless symbols
+          h<< sym if sym.name != "" or sym.type == STT::STT_SECTION#TODO: Represent nameless symbols - why did we drop these?
         }}
       if(@file.symbols.include? "_DYNAMIC" or @file.dynamic.soname =~ /^ld/) #HACK: This is how we detect ld.so and friends
         @file.pinned_sections ||= {}
@@ -660,8 +660,8 @@ module Elf
           @canonical_symbol[dynsym] = sym
           staticsym.is_dynamic = true
           staticsym.gnu_version = sym.gnu_version
-          unparsed_dyn[sym] = false
-          expect_value "Dynamic #{sym.name} size", sym.size,  staticsym.size        }
+          expect_value "Dynamic #{sym.name} size", sym.size,  staticsym.size
+        }
       }
       @dynsym.each {|sym|
         unless @canonical_symbol.include? sym
