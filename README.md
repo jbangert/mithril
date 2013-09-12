@@ -1,12 +1,12 @@
 # Mithril
 
-TODO: Write a gem description
+In Soviet Russia, Mithril forges ELF.
 
 ## Installation
 
 Add this line to your application's Gemfile:
 
-    gem 'mithril'
+    gem 'elf-mithril'
 
 And then execute:
 
@@ -14,7 +14,7 @@ And then execute:
 
 Or install it yourself as:
 
-    $ gem install mithril
+    $ gem install elf-mithril
 
 ## Usage
 
