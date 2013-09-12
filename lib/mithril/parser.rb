@@ -99,6 +99,9 @@ module Elf
         #  expect_value "Section index #{sym.shndx.to_i} in symbol should be in progbits", false, section.nil?
         end
         x= Symbol.new(strtab[sym.name],section, sym.type.to_i, value, sym.binding.to_i, sym.siz.to_i)
+        if(x.name.empty? and x.type == STT::STT_SECTION)
+          x.name = @shstrtab[@shdrs[sym.shndx.to_i].name]
+        end
         x.visibility = sym.other.to_i & 0x3
         if [SHN::SHN_ABS, SHN::SHN_COMMON, SHN::SHN_UNDEF, SHN::SHN_XINDEX].include? sym.shndx.to_i
           x.semantics = sym.shndx.to_i
@@ -634,7 +637,7 @@ module Elf
       }
       #TODO: Parse versions in static symbols
       @file.symbols = SymbolTable.new.tap{|h| (@symtab || []).each{|sym|
-          h<< sym if sym.name != "" or sym.type == STT::STT_SECTION#TODO: Represent nameless symbols - why did we drop these?
+          h<< sym if sym.name != "" #TODO: Represent nameless symbols - why did we drop these?
         }}
       if(@file.symbols.include? "_DYNAMIC" or @file.dynamic.soname =~ /^ld/) #HACK: This is how we detect ld.so and friends
         @file.pinned_sections ||= {}

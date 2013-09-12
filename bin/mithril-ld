@@ -47,6 +47,7 @@ module Elf
         }        
       }
     }
+    #TODO: mark per-object section symbols
     progbits.values.each {|progbit| outfile.progbits << progbit   }
     symbols.values.each {|sym| outfile.symbols << sym}
     
