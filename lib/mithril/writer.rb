@@ -85,6 +85,11 @@ module Elf
       def [](idx)
         @sections[idx]
       end
+      def to_s
+        out = "Layout\n"
+        @layout.each {|key,value| out << "#{key.to_s(16)} #{value.end.to_s(16)} #{value.name}"}
+        out
+      end
       def add(*sections)       #Ordering as follows: Fixed
         #(non-nil vaddrs) go where they have to go
         # Flexible sections are added to lowest hole after section of
