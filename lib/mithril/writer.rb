@@ -87,7 +87,7 @@ module Elf
       end
       def to_s
         out = "Layout\n"
-        @layout.each {|key,value| out << "#{key.to_s(16)} #{value.end.to_s(16)} #{value.name}"}
+        @layout.each {|key,value| out << "#{key.to_s(16)} #{value.end.to_s(16)} #{value.name}\n"}
         out
       end
       def add(*sections)       #Ordering as follows: Fixed

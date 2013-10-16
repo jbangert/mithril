@@ -656,14 +656,15 @@ module Elf
       @file.symbols.each {|staticsym|
         @canonical_symbol[staticsym] = staticsym
         next if staticsym.name == ""
-        next if staticsym.visibility == STB::STB_LOCAL
-        dyn_by_name[staticsym.name].andand.each {|sym|
-          next if sym.sectoffset != dynsym.sectoffset
-          next if sym.section != dynsym.section
-          @canonical_symbol[dynsym] = sym
+        next if staticsym.bind == STB::STB_LOCAL
+        binding.pry if staticsym.name == "_fini"
+        dyn_by_name[staticsym.name].andand.each {|dynsym|
+          next if dynsym.sectoffset != staticsym.sectoffset
+          next if dynsym.section != staticsym.section
+          @canonical_symbol[dynsym] = staticsym
           staticsym.is_dynamic = true
-          staticsym.gnu_version = sym.gnu_version
-          expect_value "Dynamic #{sym.name} size", sym.size,  staticsym.size
+          staticsym.gnu_version = dynsym.gnu_version
+          expect_value "Dynamic #{dynsym.name} size", dynsym.size,  staticsym.size
         }
       }
       @dynsym.each {|sym|
