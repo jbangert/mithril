@@ -657,7 +657,6 @@ module Elf
         @canonical_symbol[staticsym] = staticsym
         next if staticsym.name == ""
         next if staticsym.bind == STB::STB_LOCAL
-        binding.pry if staticsym.name == "_fini"
         dyn_by_name[staticsym.name].andand.each {|dynsym|
           next if dynsym.sectoffset != staticsym.sectoffset
           next if dynsym.section != staticsym.section
