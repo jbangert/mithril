@@ -1,6 +1,6 @@
 module Elf::Policy::Generator
   H= Elf::Policy::Hacks
-  def twostate(file,filename)
+  TwoState = Proc.new {|file,filename|
     
     tag('program') do
       section('.init')
@@ -55,5 +55,5 @@ module Elf::Policy::Generator
       end
     end 
     start 'libs'
-  end
+  }
 end
