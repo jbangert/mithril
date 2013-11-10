@@ -6,4 +6,11 @@ module Elf
       p.inject(self)
     end
   end
+  def self.policy(&block)
+    Elf::rewrite(ARGV[0]) do |file|
+      file.build_policy do
+        instance_exec(file,&block)
+      end
+    end
+  end
 end
