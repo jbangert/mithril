@@ -10,7 +10,7 @@ Gem::Specification.new do |spec|
   spec.email         = ["jbangert@acm.org"]
   spec.description   = %q{In Soviet Russia, Mithril forges Elf}
   spec.summary       = %q{The Mithril toolkit for canonical elf manipulation}
-  spec.homepage      = ""
+  spec.homepage      = "https://github.com/jbangert/mithril"
   spec.license       = "MIT"
 
   spec.files         = `git ls-files`.split($/)
