@@ -51,6 +51,7 @@ module Elf::Policy::Generator
         H::initializer_functions(filename).each {|initializer|
           call initializer
         }
+        call section_start('.init')
         call '_fini'
       end
     end 
