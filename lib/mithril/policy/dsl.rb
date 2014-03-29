@@ -45,11 +45,15 @@ module Elf
           if t.is_a? Data
             x= data
             x[t.from] ||= {}
-            x[t.from][t.to] ||= {}
-            x[t.from][t.to][t.tag] ||= t
-            x[t.from][t.to][t.tag].read ||= t.read
-            x[t.from][t.to][t.tag].write ||= t.write
-            x[t.from][t.to][t.tag].exec ||= t.exec            
+            x[t.from][t.tag] ||= t
+            if(x[t.from][t.tag].to  != t.to)
+              raise ArgumentError "Invalid Policy, different to states on same tag" #TODO: allow
+              #different accesses to go to different tags. at the moment, this is moot, because data
+              #access is unconditional
+            end
+            x[t.from][t.tag].read ||= t.read
+            x[t.from][t.tag].write ||= t.write
+            x[t.from][t.tag].exec ||= t.exec            
           elsif t.is_a? Call
             calls << t
           else
@@ -169,7 +173,7 @@ module Elf
           }
           out.calls.last.off = resolve_reference(elffile,relocations,out.calls.last.off.offset, call.symbol)
         end
-        self.data.values.map(&:values).flatten.map(&:values).flatten.each do |data|
+        self.data.values.map(&:values).flatten.each do |data|
           out.data << factory.elfp_data.new.tap {|x|
             x.from = state_ids[data.from]
             x.to = state_ids[data.to]
@@ -179,6 +183,7 @@ module Elf
             x.type |= ELFP::ELFP_RW_EXEC if data.exec
             raise RuntimeError.new "Unknown tag #{data.tag}" unless tag_ids.include? data.tag
             x.tag =   tag_ids[data.tag]
+            print "#{x.from} to #{x.to} data #{data.tag} = #{x.tag} #{data.read ? "r":" "}#{data.write ? "w":" "}#{data.exec ? "x":" "}\n" 
           }
         end
         out = Elf::ProgBits.new(".elfbac",nil,out.to_binary_s)
