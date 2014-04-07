@@ -6,7 +6,7 @@ module Elf::Policy::Generator
       section('.init')
       section('.fini')
       section('.text')
-      section('.plt')
+    #  section('.plt')
       section('.data')
       section('.bss')
       section('.rodata')
